@@ -62,7 +62,7 @@
 <p>
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="assets/readme/startnotes-v2-light.svg">
-  <img alt="Needs: uv (https://docs.astral.sh/uv/) and Python 3.12. First start: Embeds all label texts once (about 9 s on an M-series CPU) and caches them in models/label_cache/. Later starts take about 0.5 s" src="assets/readme/startnotes-v2-dark.svg" width="100%">
+  <img alt="Needs: uv (https://docs.astral.sh/uv/) and Python 3.14 (pyproject.toml: &gt;=3.14,&lt;3.15). First start: Embeds all label texts once (about 9 s on an M-series CPU) and caches them in models/label_cache/. Later starts take about 0.5 s" src="assets/readme/startnotes-v2-dark.svg" width="100%">
 </picture>
 </p>
 
