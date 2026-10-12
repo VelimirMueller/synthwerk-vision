@@ -131,7 +131,7 @@ docker run -p 8000:8000 -v synthwerk-vision-uploads:/data/uploads synthwerk-visi
 ### Configuration
 
 - Every setting is an env var with the prefix `SYNTHWERK_VISION_`. See [`.env.example`](.env.example).
-- The old prefixes `AURORAE_` and `AURORA_` are ignored. Rename them in every `.env` and deployment.
+- Env vars with any other prefix are ignored. Rename old names in every `.env` and deployment.
 
 The full reference — every endpoint, response field, taxonomy rule, correction, env var, the dev
 tree and the deploy plan — is in [docs/REFERENCE.md](docs/REFERENCE.md). The feature docs are in
