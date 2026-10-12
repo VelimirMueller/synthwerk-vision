@@ -235,7 +235,7 @@ unavailable. The fix is then to rebuild the set: `scripts/build_eval_manifest.py
 ## Configuration
 
 - All settings are environment variables with the prefix `SYNTHWERK_VISION_`. See [`.env.example`](.env.example).
-- **The old prefixes `AURORAE_` and `AURORA_` are ignored.** Rename them in every `.env` and deployment.
+- **Env vars with any other prefix are ignored.** This includes the prefixes of the old project name. Rename them in every `.env` and deployment.
 - A bare `SYNTHWERK_` prefix (without `VISION_`) is also ignored. Each Synthwerk service has its own prefix.
 - The service does not warn about old names. It uses the default value instead.
 - Names only. Secret values (`SYNTHWERK_VISION_ADMIN_TOKEN`) live in the environment, never in the repo.
