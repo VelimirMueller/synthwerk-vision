@@ -314,8 +314,8 @@
           "text": "Every setting is an env var with this prefix. See `.env.example`."
         },
         {
-          "cmd": "AURORAE_, AURORA_",
-          "text": "Old prefixes. They are ignored. Rename them in every `.env` and deployment."
+          "cmd": "any other prefix",
+          "text": "Env vars with any other prefix are ignored. Rename old names in every `.env` and deployment."
         }
       ]
     },

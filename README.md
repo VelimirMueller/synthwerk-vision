@@ -144,7 +144,7 @@ docker run -p 8000:8000 -v synthwerk-vision-uploads:/data/uploads synthwerk-visi
 <p>
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="assets/readme/config-v2-light.svg">
-  <img alt="SYNTHWERK_VISION_: Every setting is an env var with this prefix. See .env.example. AURORAE_, AURORA_: Old prefixes. They are ignored. Rename them in every .env and deployment" src="assets/readme/config-v2-dark.svg" width="100%">
+  <img alt="SYNTHWERK_VISION_: Every setting is an env var with this prefix. See .env.example. any other prefix: Env vars with any other prefix are ignored. Rename old names in every .env and deployment" src="assets/readme/config-v2-dark.svg" width="100%">
 </picture>
 </p>
 
