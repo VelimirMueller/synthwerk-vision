@@ -2,44 +2,498 @@
   "group": "flagship",
   "version": "v2",
   "dividers": [
-    {"key": "what",   "index": "01", "title": "WHAT IT DOES", "caption": "A PICTURE IN. A LABEL OUT.", "art": "strip-flagship-1"},
-    {"key": "start",  "index": "02", "title": "QUICK START",  "caption": "COPY. PASTE. CLASSIFY.",         "art": "strip-flagship-2"},
-    {"key": "how",    "index": "03", "title": "HOW IT WORKS", "caption": "BOXES AND ARROWS, AS PROMISED.", "art": "strip-flagship-3"},
-    {"key": "usage",  "index": "04", "title": "USAGE",        "caption": "THE REFERENCE. CONDENSED.",      "art": "strip-flagship-4"},
-    {"key": "status", "index": "05", "title": "STATUS",       "caption": "HONEST NUMBERS ONLY.",           "art": "strip-flagship-5"}
+    {
+      "key": "what",
+      "index": "01",
+      "title": "WHAT IT DOES",
+      "caption": "A PICTURE IN. A LABEL OUT.",
+      "art": "strip-flagship-1"
+    },
+    {
+      "key": "start",
+      "index": "02",
+      "title": "QUICK START",
+      "caption": "COPY. PASTE. CLASSIFY.",
+      "art": "strip-flagship-2"
+    },
+    {
+      "key": "how",
+      "index": "03",
+      "title": "HOW IT WORKS",
+      "caption": "BOXES AND ARROWS, AS PROMISED.",
+      "art": "strip-flagship-3"
+    },
+    {
+      "key": "usage",
+      "index": "04",
+      "title": "USAGE",
+      "caption": "THE REFERENCE. CONDENSED.",
+      "art": "strip-flagship-4"
+    },
+    {
+      "key": "status",
+      "index": "05",
+      "title": "STATUS",
+      "caption": "HONEST NUMBERS ONLY.",
+      "art": "strip-flagship-5"
+    }
   ],
   "panels": [
-    {"key": "stats", "type": "stats", "title": "THE NUMBERS", "items": [
-      {"value": "93.1 %", "label": "ROOT-TOPIC ACCURACY"},
-      {"value": "58", "label": "FROZEN EVAL PHOTOS"},
-      {"value": "35 ms", "label": "PER IMAGE, CPU"},
-      {"value": "0", "label": "EXTERNAL API CALLS"}
-    ]},
-    {"key": "features", "type": "cards", "title": "ONE IMAGE IN, ONE LABEL OUT", "items": [
-      {"title": "OPEN VOCABULARY", "text": "A label is a text, so a new label needs no training. One more embedding, nothing else."},
-      {"title": "TOPIC TREE", "text": "Every label has a place: hut -> building -> building and structure."},
-      {"title": "RUNS ON CPU", "text": "ONNX Runtime, about 35 ms per image on an M-series Mac. No GPU, no external API."}
-    ]},
-    {"key": "start", "type": "terminal", "title": "QUICK START", "lines": [
-      "$ uv sync",
-      "$ uv run python scripts/fetch_model.py",
-      "$ uv run uvicorn synthwerk_vision.main:create_app --factory --reload",
-      "# open http://localhost:8000/docs",
-      "$ curl -F \"image=@hut.jpg\" http://localhost:8000/v1/classifications"
-    ]},
-    {"key": "flow", "type": "flow", "title": "ONE IMAGE, LEFT TO RIGHT", "nodes": [
-      {"title": "IMAGE", "sub": "jpg, png, webp"},
-      {"title": "MODEL", "sub": "SigLIP 2 / MobileNetV2", "hot": true},
-      {"title": "TAXONOMY", "sub": "topic tree, roll-up"},
-      {"title": "RESPONSE", "sub": "label + topic path"}
-    ], "caption": "The model scores every label. The taxonomy sums the scores into a topic path."},
-    {"key": "status", "type": "status", "title": "WHAT WORKS TODAY", "rows": [
-      {"label": "Image classification", "value": "stable", "state": "ok"},
-      {"label": "Classification eval gate", "value": "stable", "state": "ok"},
-      {"label": "Image upload", "value": "beta", "state": "wip"},
-      {"label": "Runtime labels", "value": "beta", "state": "wip"},
-      {"label": "Picture corrections", "value": "beta", "state": "wip"},
-      {"label": "Deployment", "value": "none yet", "state": "planned"}
-    ]}
-  ]
+    {
+      "key": "stats",
+      "type": "stats",
+      "title": "THE NUMBERS",
+      "items": [
+        {
+          "value": "93.1 %",
+          "label": "ROOT-TOPIC ACCURACY"
+        },
+        {
+          "value": "58",
+          "label": "FROZEN EVAL PHOTOS"
+        },
+        {
+          "value": "35 ms",
+          "label": "PER IMAGE, CPU"
+        },
+        {
+          "value": "0",
+          "label": "EXTERNAL API CALLS"
+        }
+      ]
+    },
+    {
+      "key": "features",
+      "type": "cards",
+      "title": "ONE IMAGE IN, ONE LABEL OUT",
+      "items": [
+        {
+          "title": "OPEN VOCABULARY",
+          "text": "A label is a text, so a new label needs no training. One more embedding, nothing else."
+        },
+        {
+          "title": "TOPIC TREE",
+          "text": "Every label has a place: hut -> building -> building and structure."
+        },
+        {
+          "title": "RUNS ON CPU",
+          "text": "ONNX Runtime, about 35 ms per image on an M-series Mac. No GPU, no external API."
+        }
+      ]
+    },
+    {
+      "key": "start",
+      "type": "terminal",
+      "title": "QUICK START",
+      "lines": [
+        "$ uv sync",
+        "$ uv run python scripts/fetch_model.py",
+        "$ uv run uvicorn synthwerk_vision.main:create_app --factory --reload",
+        "# open http://localhost:8000/docs",
+        "$ curl -F \"image=@hut.jpg\" http://localhost:8000/v1/classifications"
+      ]
+    },
+    {
+      "key": "flow",
+      "type": "flow",
+      "title": "ONE IMAGE, LEFT TO RIGHT",
+      "nodes": [
+        {
+          "title": "IMAGE",
+          "sub": "jpg, png, webp"
+        },
+        {
+          "title": "MODEL",
+          "sub": "SigLIP 2 / MobileNetV2",
+          "hot": true
+        },
+        {
+          "title": "TAXONOMY",
+          "sub": "topic tree, roll-up"
+        },
+        {
+          "title": "RESPONSE",
+          "sub": "label + topic path"
+        }
+      ],
+      "caption": "The model scores every label. The taxonomy sums the scores into a topic path."
+    },
+    {
+      "key": "status",
+      "type": "status",
+      "title": "WHAT WORKS TODAY",
+      "rows": [
+        {
+          "label": "Image classification",
+          "value": "stable",
+          "state": "ok"
+        },
+        {
+          "label": "Classification eval gate",
+          "value": "stable",
+          "state": "ok"
+        },
+        {
+          "label": "Image upload",
+          "value": "beta",
+          "state": "wip"
+        },
+        {
+          "label": "Runtime labels",
+          "value": "beta",
+          "state": "wip"
+        },
+        {
+          "label": "Picture corrections",
+          "value": "beta",
+          "state": "wip"
+        },
+        {
+          "label": "Deployment",
+          "value": "none yet",
+          "state": "planned"
+        }
+      ]
+    },
+    {
+      "key": "lead",
+      "type": "lead",
+      "title": "ABOUT",
+      "text": "**synthwerk-vision** gives one image a label and the label's place in a topic tree (hut → building → building and structure). A label is a text, so a new label needs no training. It does one thing, on CPU, and does not want to talk about it."
+    },
+    {
+      "key": "what",
+      "type": "notes",
+      "title": "WHAT IT DOES",
+      "columns": 2,
+      "items": [
+        {
+          "lead": "Open vocabulary",
+          "text": "A label is a text, so a new label needs no training or new weights."
+        },
+        {
+          "lead": "A topic tree",
+          "text": "Every label has a place: `beagle → dog → mammal → animal`."
+        },
+        {
+          "lead": "Runs on CPU",
+          "text": "ONNX Runtime, about 35 ms per image on an M-series Mac. No GPU, no external API."
+        },
+        {
+          "lead": "Eval gate",
+          "text": "Scores **93.1 %** root-topic accuracy on 58 frozen photos. CI fails below 90 %."
+        }
+      ]
+    },
+    {
+      "key": "setup",
+      "type": "commands",
+      "title": "WHAT EACH STEP DOES",
+      "rows": [
+        {
+          "cmd": "uv sync",
+          "text": "Install runtime + dev dependencies from `uv.lock`."
+        },
+        {
+          "cmd": "uv run python scripts/fetch_model.py",
+          "text": "Both backends, pinned + SHA-256 verified (~1.5 GB). Or one: `fetch_model.py siglip` or `fetch_model.py mobilenet`."
+        },
+        {
+          "cmd": "uv run uvicorn synthwerk_vision.main:create_app --factory --reload",
+          "text": "Start the API. Open `http://localhost:8000/docs`."
+        },
+        {
+          "cmd": "curl -F \"image=@hut.jpg\" http://localhost:8000/v1/classifications",
+          "text": "Classify one image."
+        }
+      ]
+    },
+    {
+      "key": "startnotes",
+      "type": "notes",
+      "columns": 2,
+      "items": [
+        {
+          "lead": "Needs",
+          "text": "[uv](https://docs.astral.sh/uv/) and Python 3.12."
+        },
+        {
+          "lead": "First start",
+          "text": "Embeds all label texts once (about 9 s on an M-series CPU) and caches them in `models/label_cache/`. Later starts take about 0.5 s."
+        }
+      ]
+    },
+    {
+      "key": "docker",
+      "type": "terminal",
+      "title": "WITH DOCKER · WEIGHTS AND LABEL CACHE AT BUILD TIME",
+      "lines": [
+        "# SigLIP (default)",
+        "$ docker build -t synthwerk-vision .",
+        "# MobileNet: 14 MB of weights",
+        "$ docker build --build-arg BACKEND=mobilenet -t synthwerk-vision:small .",
+        "$ docker run -p 8000:8000 -v synthwerk-vision-uploads:/data/uploads synthwerk-vision"
+      ]
+    },
+    {
+      "key": "how",
+      "type": "notes",
+      "title": "READ THE ANSWER",
+      "items": [
+        {
+          "lead": "Scores",
+          "text": "The model (SigLIP 2, ONNX, fp32) scores every label. The score of a topic is the sum of its labels."
+        },
+        {
+          "lead": "Response",
+          "text": "The best label, its topic path, the top-k labels and the topics."
+        },
+        {
+          "lead": "Uncertain",
+          "text": "`uncertain` turns true when the root topic score is too low. Read it before you trust the answer."
+        }
+      ]
+    },
+    {
+      "key": "api",
+      "type": "commands",
+      "title": "THE API",
+      "rows": [
+        {
+          "cmd": "GET /health",
+          "text": "Liveness, and whether the model is loaded."
+        },
+        {
+          "cmd": "POST /v1/classifications",
+          "text": "Classify an image (not stored)."
+        },
+        {
+          "cmd": "POST /v1/images",
+          "text": "Store an image, return its id."
+        },
+        {
+          "cmd": "POST /v1/labels",
+          "text": "Admin. Needs `SYNTHWERK_VISION_ADMIN_TOKEN`."
+        },
+        {
+          "cmd": "GET /v1/labels",
+          "text": "Admin. Needs `SYNTHWERK_VISION_ADMIN_TOKEN`."
+        },
+        {
+          "cmd": "DELETE /v1/labels/{id}",
+          "text": "Admin. Needs `SYNTHWERK_VISION_ADMIN_TOKEN`."
+        },
+        {
+          "cmd": "POST /v1/feedback",
+          "text": "Admin. Needs `SYNTHWERK_VISION_ADMIN_TOKEN`."
+        }
+      ]
+    },
+    {
+      "key": "backends",
+      "type": "commands",
+      "title": "TWO BACKENDS",
+      "rows": [
+        {
+          "cmd": "siglip",
+          "text": "**Default.** SigLIP 2 base/16, open vocabulary, ~1.5 GB of weights."
+        },
+        {
+          "cmd": "mobilenet",
+          "text": "MobileNetV2-12, 1000 ImageNet classes, 14 MB of weights."
+        }
+      ]
+    },
+    {
+      "key": "config",
+      "type": "commands",
+      "title": "CONFIGURATION",
+      "rows": [
+        {
+          "cmd": "SYNTHWERK_VISION_",
+          "text": "Every setting is an env var with this prefix. See `.env.example`."
+        },
+        {
+          "cmd": "AURORAE_, AURORA_",
+          "text": "Old prefixes. They are ignored. Rename them in every `.env` and deployment."
+        }
+      ]
+    },
+    {
+      "key": "reference",
+      "type": "notes",
+      "columns": 2,
+      "items": [
+        {
+          "lead": "Full reference",
+          "text": "Every endpoint, response field, taxonomy rule, correction, env var, the dev tree and the deploy plan: `docs/REFERENCE.md`."
+        },
+        {
+          "lead": "Feature docs",
+          "text": "The feature docs are in `docs/features/`."
+        }
+      ]
+    },
+    {
+      "key": "now",
+      "type": "notes",
+      "columns": 3,
+      "items": [
+        {
+          "lead": "Now",
+          "text": "Working, v0.1.0."
+        },
+        {
+          "lead": "Works",
+          "text": "Classification, eval gate."
+        },
+        {
+          "lead": "Next",
+          "text": "Deployment, contracts."
+        }
+      ]
+    },
+    {
+      "key": "checks",
+      "type": "commands",
+      "title": "CHECKS",
+      "rows": [
+        {
+          "cmd": "uv run pytest",
+          "text": "Tests, coverage gate 90 %."
+        },
+        {
+          "cmd": "uv run ruff check . && uv run ruff format --check .",
+          "text": "Lint and format."
+        },
+        {
+          "cmd": "uv run mypy",
+          "text": "Strict types."
+        },
+        {
+          "cmd": "uv run python scripts/evaluate.py --min-topic-accuracy 0.9",
+          "text": "Eval gate."
+        }
+      ]
+    },
+    {
+      "key": "links",
+      "type": "buttons",
+      "items": [
+        {
+          "label": "uv",
+          "sub": "docs.astral.sh/uv",
+          "href": "https://docs.astral.sh/uv/"
+        },
+        {
+          "label": "API docs",
+          "sub": "localhost:8000/docs",
+          "href": "http://localhost:8000/docs"
+        },
+        {
+          "label": "Settings",
+          "sub": ".env.example",
+          "href": ".env.example"
+        },
+        {
+          "label": "Reference",
+          "sub": "docs/REFERENCE.md",
+          "href": "docs/REFERENCE.md"
+        },
+        {
+          "label": "Feature docs",
+          "sub": "docs/features/",
+          "href": "docs/features/"
+        },
+        {
+          "label": "License",
+          "sub": "MIT",
+          "href": "LICENSE"
+        },
+        {
+          "label": "Plain text",
+          "sub": "show copyable commands"
+        }
+      ]
+    },
+    {
+      "key": "footer",
+      "type": "footer",
+      "studio": "VM. studio / flagship",
+      "text": "open source · look per vm-brand playbook · MIT (c) 2026 Velimir Mueller",
+      "eof": "-- EOF -- it knows what a hut is --"
+    }
+  ],
+  "readme": {
+    "hero_alt": "SYNTHWERK-VISION. It names a picture in 35 milliseconds. No cloud, no training. Working, v0.1.0.",
+    "items": [
+      "lead",
+      "stats",
+      "divider:what",
+      "features",
+      "what",
+      "divider:start",
+      "start",
+      "setup",
+      "startnotes",
+      "docker",
+      {
+        "details": "links",
+        "chip": 7,
+        "code": [
+          [
+            "bash",
+            "uv sync                                  # install runtime + dev dependencies from uv.lock\nuv run python scripts/fetch_model.py     # both backends, pinned + SHA-256 verified (~1.5 GB)\n                                         # or: fetch_model.py siglip | fetch_model.py mobilenet\nuv run uvicorn synthwerk_vision.main:create_app --factory --reload"
+          ],
+          [
+            "bash",
+            "curl -F \"image=@hut.jpg\" http://localhost:8000/v1/classifications"
+          ],
+          [
+            "bash",
+            "docker build -t synthwerk-vision .                                     # SigLIP (default)\ndocker build --build-arg BACKEND=mobilenet -t synthwerk-vision:small . # 14 MB of weights\ndocker run -p 8000:8000 -v synthwerk-vision-uploads:/data/uploads synthwerk-vision"
+          ]
+        ]
+      },
+      {
+        "buttons": "links",
+        "only": [
+          1,
+          2,
+          3
+        ]
+      },
+      "divider:how",
+      "flow",
+      "how",
+      "divider:usage",
+      "api",
+      "backends",
+      "config",
+      "reference",
+      {
+        "buttons": "links",
+        "only": [
+          4,
+          5,
+          6
+        ]
+      },
+      "divider:status",
+      "status",
+      "now",
+      "checks",
+      {
+        "details": "links",
+        "chip": 7,
+        "code": [
+          [
+            "bash",
+            "uv run pytest                                              # tests, coverage gate 90 %\nuv run ruff check . && uv run ruff format --check .        # lint and format\nuv run mypy                                                # strict types\nuv run python scripts/evaluate.py --min-topic-accuracy 0.9 # eval gate"
+          ]
+        ]
+      },
+      "footer"
+    ]
+  }
 }
