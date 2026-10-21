@@ -1,0 +1,38 @@
+# Deploy a digest that was built before. Rollback = run this with the previous digest
+# (Actions tab, "Run workflow"). It never builds. Previous digests: deploy.log or
+# compose.digest.prev.yaml in /opt/synthwerk/vision on the host, or an earlier deliver run.
+name: redeploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [dev, stg, prd]
+      digest:
+        description: Image digest, sha256:<64 hex>
+        type: string
+        required: true
+
+permissions: {}
+
+jobs:
+  deploy:
+    # The digest must still carry build provenance from a main build of this repo.
+    permissions:
+      contents: read
+      attestations: read
+      packages: read
+    uses: VelimirMueller/synthwerk-blueprint/.github/workflows/deploy.yml@v1
+    with:
+      environment: ${{ inputs.environment }}
+      image: ghcr.io/velimirmueller/synthwerk-vision
+      digest: ${{ inputs.digest }}
+      service: vision
+      compose-dir: /opt/synthwerk/vision
+    secrets:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
