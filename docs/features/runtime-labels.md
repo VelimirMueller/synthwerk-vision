@@ -8,7 +8,7 @@ paths: ["src/synthwerk_vision/api/admin.py", "src/synthwerk_vision/runtime_label
 api: ["GET /v1/labels", "POST /v1/labels", "DELETE /v1/labels/{label_id}"]
 events: []
 mcp: []
-updated: 2026-10-09
+updated: 2026-10-21
 ---
 
 # Runtime labels
@@ -70,3 +70,4 @@ updated: 2026-10-09
 | Date | Change |
 |---|---|
 | 2026-10-09 | Rename to `synthwerk_vision`. The settings use the prefix `SYNTHWERK_VISION_`. |
+| 2026-10-21 | No behaviour change. The settings import moved to `platform/config.py` (#23). With an admin token, `/readyz` checks that the data directory is writable. |

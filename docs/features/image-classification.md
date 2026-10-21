@@ -4,11 +4,11 @@ slug: image-classification
 status: stable
 epic: E0
 owner: vision
-paths: ["src/synthwerk_vision/main.py", "src/synthwerk_vision/config.py", "src/synthwerk_vision/__init__.py", "src/synthwerk_vision/py.typed", "src/synthwerk_vision/api/__init__.py", "src/synthwerk_vision/api/routes.py", "src/synthwerk_vision/schemas.py", "src/synthwerk_vision/service.py", "src/synthwerk_vision/classifier.py", "src/synthwerk_vision/siglip.py", "src/synthwerk_vision/taxonomy.py", "src/synthwerk_vision/images.py", "src/synthwerk_vision/data/**"]
-api: ["POST /v1/classifications", "GET /health"]
+paths: ["src/synthwerk_vision/main.py", "src/synthwerk_vision/platform/config.py", "src/synthwerk_vision/__init__.py", "src/synthwerk_vision/py.typed", "src/synthwerk_vision/api/__init__.py", "src/synthwerk_vision/api/routes.py", "src/synthwerk_vision/schemas.py", "src/synthwerk_vision/service.py", "src/synthwerk_vision/classifier.py", "src/synthwerk_vision/siglip.py", "src/synthwerk_vision/taxonomy.py", "src/synthwerk_vision/images.py", "src/synthwerk_vision/data/**"]
+api: ["POST /v1/classifications"]
 events: []
 mcp: []
-updated: 2026-10-09
+updated: 2026-10-21
 ---
 
 # Image classification
@@ -27,7 +27,7 @@ updated: 2026-10-09
 - The response sets `uncertain` to `true` when the best root topic scores below the limit.
 - The service does not store the image.
 - Every response has an `X-Request-ID` header. A classification response also has `request_id`.
-- When the model files are missing, the service starts, and `/health` reports `model_loaded: false`.
+- When the model files are missing, the service starts, and `/readyz` reports `down` (503). See [Health and telemetry](health-and-telemetry.md).
 - When the taxonomy is broken, the service does not start.
 
 ## How to use
@@ -80,3 +80,4 @@ updated: 2026-10-09
 | Date | Change |
 |---|---|
 | 2026-10-09 | Rename to `synthwerk_vision`. The settings use the prefix `SYNTHWERK_VISION_`. |
+| 2026-10-21 | `GET /health` is removed. `/readyz` reports the model state. The settings module moved to `platform/config.py` (#23). |

@@ -12,9 +12,9 @@ import json
 import sys
 from pathlib import Path
 
-from synthwerk_vision.config import get_settings
 from synthwerk_vision.evaluation import evaluate, load_manifest
 from synthwerk_vision.main import build_service
+from synthwerk_vision.platform.config import get_settings
 
 ROOT = Path(__file__).resolve().parent.parent
 MIN_AVAILABLE = 0.9

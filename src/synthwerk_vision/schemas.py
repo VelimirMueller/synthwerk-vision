@@ -60,12 +60,6 @@ class ClassificationOut(BaseModel):
     timings_ms: dict[str, float]
 
 
-class HealthOut(BaseModel):
-    status: str
-    model_loaded: bool
-    model: str | None = Field(description="Loaded model name, or null when classification is off")
-
-
 class ErrorOut(BaseModel):
     detail: str
 

@@ -4,8 +4,8 @@ Runs at Docker build time. Uses the same settings (SYNTHWERK_VISION_*) as the se
 Usage: uv run python scripts/warm_label_cache.py
 """
 
-from synthwerk_vision.config import get_settings
 from synthwerk_vision.main import build_service
+from synthwerk_vision.platform.config import get_settings
 
 
 def main() -> None:

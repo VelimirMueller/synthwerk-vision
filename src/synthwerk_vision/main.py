@@ -1,10 +1,12 @@
 import asyncio
 import logging
+import os
 import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,8 +15,18 @@ from synthwerk_vision import __version__
 from synthwerk_vision.api import admin
 from synthwerk_vision.api.routes import router
 from synthwerk_vision.classifier import Classifier, ModelNotAvailableError, OnnxClassifier
-from synthwerk_vision.config import Settings, get_settings
 from synthwerk_vision.feedback import FeedbackStore
+from synthwerk_vision.platform import health
+from synthwerk_vision.platform.config import Settings, get_settings
+from synthwerk_vision.platform.health import CheckResult, ReadinessCheck
+from synthwerk_vision.platform.log import configure_logging, request_id_bound
+from synthwerk_vision.platform.otel import (
+    HEALTH_PATHS,
+    Telemetry,
+    build_resource,
+    log_fields,
+    setup_telemetry,
+)
 from synthwerk_vision.runtime_labels import RuntimeLabels, signature
 from synthwerk_vision.service import ClassificationService
 from synthwerk_vision.siglip import SiglipClassifier
@@ -38,7 +50,10 @@ def _load_classifier(settings: Settings, taxonomy: Taxonomy) -> Classifier | Non
             )
         return OnnxClassifier(settings.model_path, settings.ort_threads)
     except ModelNotAvailableError as exc:
-        logger.warning("classification disabled: %s", exc)
+        logger.warning(
+            "classification disabled: model not available",
+            extra={"event.name": "vision.model.unavailable", "error.message": str(exc)},
+        )
         return None
 
 
@@ -62,7 +77,7 @@ def build_service(
     settings: Settings, classifier: Classifier | None = None
 ) -> ClassificationService | None:
     """Classification service for the configured backend, or None when its model is missing."""
-    # A missing model is an ops state (503 + /health); a broken taxonomy is a config bug and
+    # A missing model is an ops state (503 + /readyz down); a broken taxonomy is a config bug and
     # must stop startup, so TaxonomyError is not caught here.
     packaged = PACKAGED_TAXONOMY[settings.backend]
     taxonomy = runtime_labels(settings).load(
@@ -80,13 +95,35 @@ def build_service(
     )
 
 
+async def _model_ready(request: Request) -> CheckResult:
+    if getattr(request.app.state, "service", None) is None:
+        return CheckResult("down", "model not loaded")
+    return CheckResult("ok")
+
+
+def _data_dir_check(data_dir: Path) -> ReadinessCheck:
+    """Runtime labels and corrections are written here. Not writable: the admin endpoints
+    fail, classification still works, so the service is degraded, not down."""
+
+    async def run(_: Request) -> CheckResult:
+        existing = next(p for p in (data_dir, *data_dir.absolute().parents) if p.exists())
+        writable = await asyncio.to_thread(os.access, existing, os.W_OK)
+        return CheckResult("ok") if writable else CheckResult("degraded", "data dir not writable")
+
+    return ReadinessCheck("data_dir", run)
+
+
 def create_app(
     settings: Settings | None = None,
     *,
     storage: ImageStorage | None = None,
     classifier: Classifier | None = None,
+    telemetry: Telemetry | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
+    resource = build_resource(settings)
+    configure_logging(settings, log_fields(resource))
+    telemetry = telemetry or setup_telemetry(resource)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -99,9 +136,16 @@ def create_app(
         )
         app.state.feedback = feedback_store(settings)
         app.state.admin_lock = asyncio.Lock()
-        yield
+        try:
+            yield
+        finally:
+            telemetry.shutdown()
 
     app = FastAPI(title="Synthwerk Vision API", version=__version__, lifespan=lifespan)
+    app.state.commit = settings.commit
+    app.state.readiness_checks = [ReadinessCheck("model", _model_ready)]
+    if settings.admin_token is not None:
+        app.state.readiness_checks.append(_data_dir_check(settings.data_dir))
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -119,18 +163,26 @@ def create_app(
         request_id = incoming if _REQUEST_ID.fullmatch(incoming) else uuid.uuid4().hex
         request.state.request_id = request_id
         request.state.started = time.perf_counter()
-        response = await call_next(request)
-        response.headers["X-Request-ID"] = request_id
-        logger.info(
-            "request_id=%s method=%s path=%s status=%d duration_ms=%.1f",
-            request_id,
-            request.method,
-            request.url.path,
-            response.status_code,
-            (time.perf_counter() - request.state.started) * 1000,
-        )
+        with request_id_bound(request_id):
+            response = await call_next(request)
+            response.headers["X-Request-ID"] = request_id
+            route = request.scope.get("route")
+            fields: dict[str, object] = {
+                "event.name": "http.server.request",
+                "http.request.method": request.method,
+                "http.response.status_code": response.status_code,
+                "synthwerk.duration_ms": round(
+                    (time.perf_counter() - request.state.started) * 1000, 1
+                ),
+            }
+            if route is not None:  # unmatched paths (404) get no route: never the raw path
+                fields["http.route"] = route.path
+            level = logging.DEBUG if request.url.path in HEALTH_PATHS else logging.INFO
+            logger.log(level, "request completed", extra=fields)
         return response
 
+    app.include_router(health.router)
     app.include_router(router)
     app.include_router(admin.router)
+    telemetry.instrument(app)
     return app

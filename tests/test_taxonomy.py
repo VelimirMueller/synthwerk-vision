@@ -158,8 +158,8 @@ def test_uncertainty_uses_the_unrounded_score() -> None:
 def test_broken_taxonomy_stops_startup(tmp_path: Path) -> None:
     from fastapi.testclient import TestClient
 
-    from synthwerk_vision.config import Settings
     from synthwerk_vision.main import create_app
+    from synthwerk_vision.platform.config import Settings
 
     broken = tmp_path / "broken.yaml"
     broken.write_text(yaml.safe_dump({"topics": [{"id": "a", "parent": "zzz"}], "labels": []}))
