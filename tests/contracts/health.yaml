@@ -1,4 +1,4 @@
-# Vendored from synthwerk-contracts openapi/_shared/health.yaml (synthwerk#23, 2026-10-21).
+# Vendored from VelimirMueller/synthwerk-contracts openapi/_shared/health.yaml at commit 5b77882.
 # The contract wins: refresh this copy when it changes, or use the published kit.
 openapi: 3.1.0
 info:
@@ -61,7 +61,7 @@ paths:
                     latency_ms: 2
                   - name: signoz
                     status: degraded
-                    latency_ms: 1500
+                    latency_ms: 800
                     detail: export queue full
         "503":
           description: Status `down`. Do not send traffic.
@@ -76,7 +76,7 @@ paths:
                 checks:
                   - name: postgres
                     status: down
-                    latency_ms: 3000
+                    latency_ms: 4
                     detail: connection refused
 components:
   schemas:
