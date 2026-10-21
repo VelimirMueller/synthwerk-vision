@@ -34,10 +34,6 @@ HEALTH_PATHS = ("/healthz", "/readyz")
 # The log line and the stdout JSON carry these resource attributes.
 LOG_RESOURCE_KEYS = ("service.name", "service.version", "deployment.environment.name")
 
-# Emit the stable HTTP semantic conventions (`http.server.request.duration`, `http.route`).
-# The instrumentation reads this once, on first use; an explicit value from the env wins.
-os.environ.setdefault("OTEL_SEMCONV_STABILITY_OPT_IN", "http")
-
 
 def build_resource(settings: Settings) -> Resource:
     """Service defaults, overridden by `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES`."""
@@ -54,7 +50,7 @@ def build_resource(settings: Settings) -> Resource:
 
 
 def log_fields(resource: Resource) -> dict[str, str]:
-    return {key: str(resource.attributes[key]) for key in LOG_RESOURCE_KEYS}
+    return {key: str(resource.attributes.get(key, "")) for key in LOG_RESOURCE_KEYS}
 
 
 @dataclass
@@ -68,6 +64,9 @@ class Telemetry:
         if self.logger_provider is not None:
             self._log_handler = LoggingHandler(logger_provider=self.logger_provider)
             install_handler(self._log_handler)
+        # Emit the stable HTTP semantic conventions (`http.server.request.duration`). The
+        # instrumentation reads this once, on first use; an explicit value from the env wins.
+        os.environ.setdefault("OTEL_SEMCONV_STABILITY_OPT_IN", "http")
         excluded = os.environ.get("OTEL_PYTHON_FASTAPI_EXCLUDED_URLS", "")
         FastAPIInstrumentor.instrument_app(
             app,

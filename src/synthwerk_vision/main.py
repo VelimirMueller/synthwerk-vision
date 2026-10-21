@@ -103,10 +103,12 @@ async def _model_ready(request: Request) -> CheckResult:
 
 def _data_dir_check(data_dir: Path) -> ReadinessCheck:
     """Runtime labels and corrections are written here. Not writable: the admin endpoints
-    fail, classification still works, so the service is degraded, not down."""
+    fail, classification still works, so the service is degraded, not down. Uses
+    os.access: as root it reports writable; the image runs as uid 10001."""
 
     async def run(_: Request) -> CheckResult:
-        existing = next(p for p in (data_dir, *data_dir.absolute().parents) if p.exists())
+        candidates = (data_dir, *data_dir.absolute().parents)
+        existing = next((p for p in candidates if p.exists()), Path(data_dir.absolute().anchor))
         writable = await asyncio.to_thread(os.access, existing, os.W_OK)
         return CheckResult("ok") if writable else CheckResult("degraded", "data dir not writable")
 
