@@ -15,8 +15,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.concurrency import run_in_threadpool
 
 from synthwerk_vision.api.routes import get_service, validated_image
-from synthwerk_vision.config import Settings, get_settings
 from synthwerk_vision.images import ValidatedImage, dhash
+from synthwerk_vision.platform.config import Settings, get_settings
 from synthwerk_vision.runtime_labels import RuntimeLabelError, signature
 from synthwerk_vision.schemas import (
     ErrorOut,

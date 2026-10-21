@@ -69,7 +69,7 @@ jobs:
           name: eval-report
           path: eval/reports/
 
-  # Local: build the small MobileNet image and check that /health answers.
+  # Local: build the small MobileNet image and check that /readyz answers 200 (model loaded).
   docker-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -79,11 +79,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: docker build --build-arg BACKEND=mobilenet -t synthwerk-vision:ci .
+      - run: docker build --build-arg BACKEND=mobilenet --build-arg COMMIT="$GITHUB_SHA" -t synthwerk-vision:ci .
       - name: Smoke test container
         run: |
           docker run -d --rm --name api -p 8000:8000 synthwerk-vision:ci
-          for _ in $(seq 1 30); do curl -sf localhost:8000/health && exit 0; sleep 1; done
+          for _ in $(seq 1 30); do curl -sf localhost:8000/readyz && exit 0; sleep 1; done
           docker logs api
           exit 1
 

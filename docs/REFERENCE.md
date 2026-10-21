@@ -22,12 +22,19 @@ flowchart LR
 
 | Method | Path                  | Purpose                                     | Success | Errors        |
 |--------|-----------------------|---------------------------------------------|---------|---------------|
-| GET    | `/health`             | Liveness, and whether the model is loaded   | 200     |               |
+| GET    | `/healthz`            | Liveness: the process runs (no checks)      | 200     |               |
+| GET    | `/readyz`             | Readiness: `model` check (+ `data_dir` with admin on) | 200 | 503 |
 | POST   | `/v1/images`          | Store an image, return its generated id     | 201     | 413, 415, 422 |
 | POST   | `/v1/classifications` | Classify an image (not stored)              | 200     | 413, 415, 422, 503 |
 | *admin* | `/v1/labels`, `/v1/feedback` | See [Runtime labels and corrections](#runtime-labels-and-corrections) | | 401, 404, 409 |
 
-- Today the service has only `/health`. `/healthz` and `/readyz` replace it in E1 (change list step 9).
+- `/healthz` and `/readyz` follow the Synthwerk health contract (`openapi/_shared/health.yaml` in
+  synthwerk-contracts). `/health` is gone (#23).
+- `/readyz` answers `{status, version, commit, checks[{name, status, latency_ms, detail}]}`.
+  `status` is the worst check: `ok` and `degraded` answer 200, `down` answers 503.
+  - `model`: `down` until the model is loaded.
+  - `data_dir`: only when `SYNTHWERK_VISION_ADMIN_TOKEN` is set. `degraded` when the data
+    directory is not writable (classification still works, runtime labels and corrections fail).
 - Both POST endpoints take `multipart/form-data` with one field, `image` (JPEG, PNG or WebP).
 
 Example: a photo of a wooden hut in a rice field (real output, `top_k=3`, ids shortened):
@@ -126,8 +133,8 @@ own deployment you can also edit a copy of the YAML and set `SYNTHWERK_VISION_TA
 (unknown parents, cycles, duplicate ids, gaps in the indices, label count against the model's
 outputs) and refuses to start if it is broken. This holds even when the model is missing: a
 missing model is an ops state (503), while a broken taxonomy is a config bug.
-If the model files are missing, the service still starts: `/health` reports
-`"model_loaded": false` and classification returns 503.
+If the model files are missing, the service still starts: `/readyz` reports `down` (503)
+and classification returns 503.
 
 ### Backends
 
@@ -257,12 +264,47 @@ unavailable. The fix is then to rebuild the set: `scripts/build_eval_manifest.py
 | `SYNTHWERK_VISION_TOP_K`            | `5`                                            |
 | `SYNTHWERK_VISION_TOPIC_MIN_SCORE`  | `0.05`                                         |
 | `SYNTHWERK_VISION_UNCERTAIN_BELOW`  | `0.5`                                          |
+| `SYNTHWERK_VISION_LOG_LEVEL`        | `INFO` (`DEBUG`, `INFO`, `WARN`, `ERROR`)       |
+| `SYNTHWERK_VISION_LOG_FORMAT`       | `json` (`console` works only when the env is `local`) |
+| `SYNTHWERK_VISION_COMMIT`           | `0000000` (the image sets the build commit)    |
+| `SYNTHWERK_PLATFORM_ENV`            | `local` (`local`, `ci`, `dev`, `stg`, `prd`); shared, no service prefix |
+
+OpenTelemetry uses the `OTEL_*` names of the OTel spec, read from the process environment
+(not from `.env`):
+
+| Variable | Value |
+|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Collector address, for example `http://otel-collector:4317`. Unset: no exporter, one `WARN` line. |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` |
+| `OTEL_SERVICE_NAME` | `synthwerk-vision` (default) |
+| `OTEL_RESOURCE_ATTRIBUTES` | `service.namespace=synthwerk,deployment.environment.name=<env>` |
+| `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` | `parentbased_traceidratio`; `1.0` up to `stg`, `0.2` in `prd` |
+| `OTEL_PYTHON_FASTAPI_EXCLUDED_URLS` | Extra URLs without spans. `/healthz` and `/readyz` are always excluded. |
+
+## Logs and telemetry
+
+- Logs are one JSON object per line on stdout (structlog over stdlib `logging`; uvicorn uses
+  the same handler). Fields: `timestamp`, `level`, `msg`, `event.name`, `service.name`,
+  `service.version`, `deployment.environment.name`, and when present `trace_id`, `span_id`,
+  `synthwerk.request_id`.
+- Each request writes one line `request completed` with `http.request.method`, `http.route`
+  (the route template, never the raw path or query), `http.response.status_code` and
+  `synthwerk.duration_ms`. `uvicorn.access` is off. `/healthz` and `/readyz` log at `DEBUG` only.
+- Keys such as `token`, `authorization`, `image` and `body` are dropped from every log record
+  (full list: `FORBIDDEN_KEYS` in `platform/log.py`).
+- With `OTEL_EXPORTER_OTLP_ENDPOINT` set, traces (FastAPI instrumentation), metrics
+  (`http.server.request.duration`) and the same log records go out over OTLP/gRPC. Health
+  endpoints make no spans.
 
 ## Development
 
 ```text
 src/synthwerk_vision/
-  main.py         app factory, CORS, request id, lifespan (loads storage + classifier)
+  main.py         app factory, CORS, request id + request log line, readiness checks, lifespan
+  platform/config.py  pydantic-settings (prefix SYNTHWERK_VISION_, plus SYNTHWERK_PLATFORM_ENV)
+  platform/log.py     JSON logs: structlog formatter, forbidden keys, request id
+  platform/otel.py    OpenTelemetry resource, OTLP exporters, FastAPI instrumentation
+  platform/health.py  /healthz and /readyz (health contract)
   api/routes.py   HTTP layer and dependency wiring
   api/admin.py    runtime labels and corrections (bearer token)
   images.py       bounded reads, image validation, dHash
@@ -275,13 +317,14 @@ src/synthwerk_vision/
   service.py      classifier + taxonomy -> labels, topics, uncertainty, timings
   evaluation.py   manifest loading, cached downloads, metrics, markdown/JSON reports
   data/taxonomy_open.yaml, data/taxonomy.yaml
-  config.py       pydantic-settings (prefix SYNTHWERK_VISION_)
 scripts/fetch_model.py           pinned model download
 scripts/build_taxonomy.py        regenerate both taxonomies from WordNet (dev only)
 scripts/warm_label_cache.py      embed label texts ahead of time (Docker build)
 scripts/evaluate.py              eval gate (root-topic accuracy, per-topic table, misses)
 scripts/build_eval_manifest.py   rebuild the eval set from Commons (needs re-review)
 tests/                           unit tests with fakes, real-model tests (skip without weights),
+                                 test_platform.py (health contract, logs, OTel; tests/contracts/ holds
+                                 a copy of the contracts health schema),
                                  rename guard (test_naming.py: the old brand name must not return)
 ```
 
@@ -298,7 +341,7 @@ tests/                           unit tests with fakes, real-model tests (skip w
   [`py-ci.yml@v1`](https://github.com/VelimirMueller/synthwerk-blueprint/blob/main/.github/workflows/py-ci.yml)
   (ruff, mypy strict, pytest without weights). Two local jobs add the rest:
   - `model`: fetches the weights, runs all tests with the real models, and runs the eval gate.
-  - `docker-smoke`: builds the MobileNet image and checks `/health`.
+  - `docker-smoke`: builds the MobileNet image and checks that `/readyz` answers 200.
   - `gate` passes only when all jobs pass.
 - [`deliver.yml`](.github/workflows/deliver.yml) calls the blueprint
   [`image.yml@v1`](https://github.com/VelimirMueller/synthwerk-blueprint/blob/main/.github/workflows/image.yml)
@@ -329,6 +372,7 @@ tests/                           unit tests with fakes, real-model tests (skip w
 | [Runtime labels](docs/features/runtime-labels.md) | beta |
 | [Picture corrections](docs/features/picture-corrections.md) | beta |
 | [Classification eval gate](docs/features/classification-eval.md) | stable |
+| [Health and telemetry](docs/features/health-and-telemetry.md) | beta |
 
 ## Model and data
 

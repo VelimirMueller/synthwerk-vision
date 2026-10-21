@@ -15,6 +15,12 @@ dependencies = [
     "onnxruntime>=1.20",
     "pyyaml>=6.0.3",
     "tokenizers>=0.23.2",
+    "opentelemetry-api==1.45.1",
+    "opentelemetry-sdk==1.45.1",
+    "opentelemetry-exporter-otlp-proto-grpc==1.45.1",
+    "opentelemetry-instrumentation-fastapi==0.66b1",
+    "structlog==26.1.0",
+    "opentelemetry-instrumentation-logging==0.66b1",
 ]
 
 [dependency-groups]
@@ -29,6 +35,8 @@ dev = [
     "pre-commit>=4.0",
     "nltk>=3.10.3",
     "types-pyyaml>=6.0.12.20260906",
+    "jsonschema>=4.26",
+    "types-jsonschema>=4.26",
 ]
 
 [build-system]

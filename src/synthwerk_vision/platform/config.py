@@ -10,7 +10,22 @@ class Settings(BaseSettings):
     """Runtime configuration, read from environment variables prefixed with SYNTHWERK_VISION_."""
 
     model_config = SettingsConfigDict(
-        env_prefix="SYNTHWERK_VISION_", env_file=".env", extra="ignore"
+        env_prefix="SYNTHWERK_VISION_", env_file=".env", extra="ignore", populate_by_name=True
+    )
+
+    platform_env: Literal["local", "ci", "dev", "stg", "prd"] = Field(
+        default="local",
+        validation_alias="SYNTHWERK_PLATFORM_ENV",
+        description="Shared platform setting (no service prefix): the deployment environment.",
+    )
+    log_level: Literal["DEBUG", "INFO", "WARN", "ERROR"] = "INFO"
+    log_format: Literal["json", "console"] = Field(
+        default="json", description="console is used only when the environment is local."
+    )
+    commit: str = Field(
+        default="0000000",
+        pattern=r"^[0-9a-f]{7,40}$",
+        description="Git commit of the build, shown by /readyz. The image sets it at build time.",
     )
 
     cors_origins: list[str] = Field(

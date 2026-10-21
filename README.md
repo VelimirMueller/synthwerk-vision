@@ -130,7 +130,7 @@ docker run -p 8000:8000 -v synthwerk-vision-uploads:/data/uploads synthwerk-visi
 <p>
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="assets/readme/api-v2-light.svg">
-  <img alt="GET /health: Liveness, and whether the model is loaded. POST /v1/classifications: Classify an image (not stored). POST /v1/images: Store an image, return its id. POST /v1/labels: Admin. Needs SYNTHWERK_VISION_ADMIN_TOKEN. GET /v1/labels: Admin. Needs SYNTHWERK_VISION_ADMIN_TOKEN. DELETE /v1/labels/{id}: Admin. Needs SYNTHWERK_VISION_ADMIN_TOKEN. POST /v1/feedback: Admin. Needs SYNTHWERK_VISION_ADMIN_TOKEN" src="assets/readme/api-v2-dark.svg" width="100%">
+  <img alt="GET /healthz: Liveness. No dependency checks. GET /readyz: Readiness. 503 until the model is loaded. POST /v1/classifications: Classify an image (not stored). POST /v1/images: Store an image, return its id. POST /v1/labels: Admin. Needs SYNTHWERK_VISION_ADMIN_TOKEN. GET /v1/labels: Admin. Needs SYNTHWERK_VISION_ADMIN_TOKEN. DELETE /v1/labels/{id}: Admin. Needs SYNTHWERK_VISION_ADMIN_TOKEN. POST /v1/feedback: Admin. Needs SYNTHWERK_VISION_ADMIN_TOKEN" src="assets/readme/api-v2-dark.svg" width="100%">
 </picture>
 </p>
 
@@ -144,7 +144,7 @@ docker run -p 8000:8000 -v synthwerk-vision-uploads:/data/uploads synthwerk-visi
 <p>
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="assets/readme/config-v2-light.svg">
-  <img alt="SYNTHWERK_VISION_: Every setting is an env var with this prefix. See .env.example. any other prefix: Env vars with any other prefix are ignored. Rename old names in every .env and deployment" src="assets/readme/config-v2-dark.svg" width="100%">
+  <img alt="SYNTHWERK_VISION_: Every setting is an env var with this prefix. See .env.example. SYNTHWERK_VISION_LOG_*: LOG_LEVEL (INFO) and LOG_FORMAT (json). Logs are JSON lines on stdout. OTEL_*: OpenTelemetry. Set OTEL_EXPORTER_OTLP_ENDPOINT to export traces, metrics and logs. any other prefix: Env vars with any other prefix are ignored. Rename old names in every .env and deployment" src="assets/readme/config-v2-dark.svg" width="100%">
 </picture>
 </p>
 

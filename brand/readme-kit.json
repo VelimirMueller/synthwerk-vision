@@ -260,8 +260,12 @@
       "title": "THE API",
       "rows": [
         {
-          "cmd": "GET /health",
-          "text": "Liveness, and whether the model is loaded."
+          "cmd": "GET /healthz",
+          "text": "Liveness. No dependency checks."
+        },
+        {
+          "cmd": "GET /readyz",
+          "text": "Readiness. 503 until the model is loaded."
         },
         {
           "cmd": "POST /v1/classifications",
@@ -312,6 +316,14 @@
         {
           "cmd": "SYNTHWERK_VISION_",
           "text": "Every setting is an env var with this prefix. See `.env.example`."
+        },
+        {
+          "cmd": "SYNTHWERK_VISION_LOG_*",
+          "text": "`LOG_LEVEL` (INFO) and `LOG_FORMAT` (json). Logs are JSON lines on stdout."
+        },
+        {
+          "cmd": "OTEL_*",
+          "text": "OpenTelemetry. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to export traces, metrics and logs."
         },
         {
           "cmd": "any other prefix",

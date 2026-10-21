@@ -3,21 +3,18 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from synthwerk_vision.config import Settings
+from synthwerk_vision.platform.config import Settings
 from tests.conftest import make_image
 
 
-def test_health_reports_model_state(client: TestClient, client_without_model: TestClient) -> None:
-    assert client.get("/health").json() == {
-        "status": "ok",
-        "model_loaded": True,
-        "model": "fake-model",
-    }
-    assert client_without_model.get("/health").json() == {
-        "status": "ok",
-        "model_loaded": False,
-        "model": None,
-    }
+def test_readyz_reports_model_state(client: TestClient, client_without_model: TestClient) -> None:
+    ready = client.get("/readyz")
+    not_ready = client_without_model.get("/readyz")
+
+    assert (ready.status_code, ready.json()["status"]) == (200, "ok")
+    assert [(c["name"], c["status"]) for c in ready.json()["checks"]] == [("model", "ok")]
+    assert (not_ready.status_code, not_ready.json()["status"]) == (503, "down")
+    assert not_ready.json()["checks"][0]["detail"] == "model not loaded"
 
 
 def test_upload_stores_image_under_generated_id(client: TestClient, settings: Settings) -> None:
@@ -136,8 +133,8 @@ def test_classification_without_model_is_503(client_without_model: TestClient) -
 
 
 def test_cors_allows_only_configured_origins(client: TestClient) -> None:
-    allowed = client.get("/health", headers={"Origin": "http://localhost:5173"})
-    denied = client.get("/health", headers={"Origin": "https://evil.example"})
+    allowed = client.get("/healthz", headers={"Origin": "http://localhost:5173"})
+    denied = client.get("/healthz", headers={"Origin": "https://evil.example"})
 
     assert allowed.headers["access-control-allow-origin"] == "http://localhost:5173"
     assert "access-control-allow-origin" not in denied.headers
@@ -158,7 +155,7 @@ def test_every_response_carries_a_request_id(client: TestClient) -> None:
 def test_caller_request_id_is_kept_only_when_safe(
     client: TestClient, incoming: str, kept: bool
 ) -> None:
-    response = client.get("/health", headers={"X-Request-ID": incoming})
+    response = client.get("/healthz", headers={"X-Request-ID": incoming})
 
     assert (response.headers["x-request-id"] == incoming) is kept
 
@@ -168,4 +165,4 @@ def test_mobilenet_backend_without_weights_degrades_to_503(settings: Settings) -
 
     mobilenet = settings.model_copy(update={"backend": "mobilenet", "taxonomy_path": None})
     with TestClient(create_app(mobilenet)) as client:
-        assert client.get("/health").json()["model_loaded"] is False
+        assert client.get("/readyz").status_code == 503

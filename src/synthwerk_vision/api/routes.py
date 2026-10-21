@@ -5,7 +5,6 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from starlette.concurrency import run_in_threadpool
 
-from synthwerk_vision.config import Settings, get_settings
 from synthwerk_vision.feedback import FeedbackStore
 from synthwerk_vision.images import (
     InvalidImageError,
@@ -15,12 +14,12 @@ from synthwerk_vision.images import (
     read_limited,
     validate_image,
 )
+from synthwerk_vision.platform.config import Settings, get_settings
 from synthwerk_vision.runtime_labels import signature
 from synthwerk_vision.schemas import (
     ClassificationOut,
     CorrectionOut,
     ErrorOut,
-    HealthOut,
     ImageInfo,
     ImageOut,
     LabelOut,
@@ -77,16 +76,6 @@ async def validated_image(
         raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, str(exc)) from exc
     except InvalidImageError as exc:
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, str(exc)) from exc
-
-
-@router.get("/health", tags=["ops"])
-def health(request: Request) -> HealthOut:
-    service: ClassificationService | None = request.app.state.service
-    return HealthOut(
-        status="ok",
-        model_loaded=service is not None,
-        model=service.model_name if service else None,
-    )
 
 
 @router.post(

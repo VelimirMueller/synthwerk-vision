@@ -1,0 +1,139 @@
+# Vendored from VelimirMueller/synthwerk-contracts openapi/_shared/health.yaml at commit 5b77882.
+# The contract wins: refresh this copy when it changes, or use the published kit.
+openapi: 3.1.0
+info:
+  title: Synthwerk health
+  version: 0.1.0
+  summary: Liveness and readiness. Every Synthwerk service serves both paths.
+  description: |
+    The pulse contract (synthwerk-pulse §8).
+    - `/healthz` checks the process only. It does no dependency checks and answers in < 10 ms.
+    - `/readyz` checks the dependencies. It answers in < 1 s. Pulse times out at 3 s.
+    - Both paths are public inside the cluster and need no token.
+  license:
+    name: MIT
+    identifier: MIT
+  contact:
+    name: Velimir Mueller
+    url: https://github.com/VelimirMueller/synthwerk-contracts
+tags:
+  - name: health
+    description: Liveness and readiness probes.
+paths:
+  /healthz:
+    get:
+      operationId: health.getLiveness
+      summary: Liveness
+      description: The process runs. No dependency checks.
+      tags: [health]
+      security: []
+      responses:
+        "200":
+          description: The process runs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Liveness"
+              example:
+                status: ok
+  /readyz:
+    get:
+      operationId: health.getReadiness
+      summary: Readiness
+      description: |
+        The service can do its job. `ok` and `degraded` answer 200, `down` answers 503.
+      tags: [health]
+      security: []
+      responses:
+        "200":
+          description: Status `ok` or `degraded`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+              example:
+                status: degraded
+                version: 0.4.1
+                commit: 3f9c2e1
+                checks:
+                  - name: postgres
+                    status: ok
+                    latency_ms: 2
+                  - name: signoz
+                    status: degraded
+                    latency_ms: 800
+                    detail: export queue full
+        "503":
+          description: Status `down`. Do not send traffic.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+              example:
+                status: down
+                version: 0.4.1
+                commit: 3f9c2e1
+                checks:
+                  - name: postgres
+                    status: down
+                    latency_ms: 4
+                    detail: connection refused
+components:
+  schemas:
+    Liveness:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+    ReadinessStatus:
+      type: string
+      enum: [ok, degraded, down]
+      description: |
+        - `ok`: every check passes.
+        - `degraded`: a non-critical check fails. The service still works.
+        - `down`: a critical check fails. The service answers 503.
+    Readiness:
+      type: object
+      additionalProperties: false
+      required: [status, version, commit, checks]
+      properties:
+        status:
+          $ref: "#/components/schemas/ReadinessStatus"
+        version:
+          type: string
+          maxLength: 64
+          description: Release version of the service, for example `0.4.1`.
+        commit:
+          type: string
+          maxLength: 40
+          pattern: "^[0-9a-f]{7,40}$"
+          description: Git commit SHA of the build.
+        checks:
+          type: array
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/Check"
+    Check:
+      type: object
+      additionalProperties: false
+      required: [name, status, latency_ms]
+      properties:
+        name:
+          type: string
+          maxLength: 64
+          pattern: "^[a-z][a-z0-9_-]*$"
+          description: Dependency name, for example `postgres` or `nats`.
+        status:
+          $ref: "#/components/schemas/ReadinessStatus"
+        latency_ms:
+          type: integer
+          minimum: 0
+          maximum: 60000
+          description: Duration of this check in milliseconds.
+        detail:
+          type: string
+          maxLength: 256
+          description: Short cause when the check fails. No secrets, no personal data.
