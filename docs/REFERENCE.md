@@ -345,7 +345,7 @@ tests/                           unit tests with fakes, real-model tests (skip w
   - `gate` passes only when all jobs pass.
 - [`deliver.yml`](.github/workflows/deliver.yml) calls the blueprint
   [`image.yml@v1`](https://github.com/VelimirMueller/synthwerk-blueprint/blob/main/.github/workflows/image.yml)
-  for the default SigLIP image: build, SBOM, Trivy scan.
+  for the default SigLIP image: build, SBOM, Trivy scan, then the deploy chain (see Deploy).
 - Dependabot watches Python, Actions and Docker dependencies.
 - Workflow runs: [ci](https://github.com/VelimirMueller/synthwerk-vision/actions/workflows/ci.yml) · [deliver](https://github.com/VelimirMueller/synthwerk-vision/actions/workflows/deliver.yml).
 
@@ -356,11 +356,26 @@ tests/                           unit tests with fakes, real-model tests (skip w
 
 ## Deploy
 
-- No deployment exists yet.
-- A push to `main` or a `v*` tag pushes the image to `ghcr.io/velimirmueller/synthwerk-vision`
-  and signs it with cosign.
-- Target (D-04): merge to `main` deploys to **dev**. A `vX.Y.Z` tag deploys to **stg**.
-  **prd** gets the same image digest after a manual approval.
+- No host exists yet ([synthwerk#7](https://github.com/VelimirMueller/synthwerk/issues/7),
+  [synthwerk#8](https://github.com/VelimirMueller/synthwerk/issues/8)). Every deploy job skips
+  with the notice `deploy skipped` until the environment has its `DEPLOY_*` secrets.
+- Build once, promote by digest ([synthwerk#27](https://github.com/VelimirMueller/synthwerk/issues/27)),
+  in [`deliver.yml`](.github/workflows/deliver.yml):
+  - Push to `main`: build, push `ghcr.io/velimirmueller/synthwerk-vision`, sign with cosign,
+    deploy that digest to **dev**.
+  - Tag `vX.Y.Z`: no build. The tag gets the digest that `main` built for the same commit.
+    That digest goes to **stg**, then to **prd** after a manual approval.
+- Each deploy runs the blueprint
+  [`deploy.yml`](https://github.com/VelimirMueller/synthwerk-blueprint/blob/main/.github/workflows/deploy.yml):
+  SSH to the host, `docker compose up` service `vision` in `/opt/synthwerk/vision` with the image
+  pinned by digest, and fail unless the running container has that digest.
+- Rollback: run [`redeploy.yml`](.github/workflows/redeploy.yml) with the environment and the
+  previous digest. It never builds.
+- Repo settings (once): environments `dev`, `stg`, `prd` with the secrets `DEPLOY_HOST`,
+  `DEPLOY_USER`, `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`; a required reviewer on `prd`.
+  Host contract: blueprint
+  [`docs/conventions/deploy.md`](https://github.com/VelimirMueller/synthwerk-blueprint/blob/main/docs/conventions/deploy.md).
+- `/readyz` reports the real commit: the image build passes `COMMIT=<sha>`.
 - Infrastructure: [synthwerk-infra](https://github.com/VelimirMueller/synthwerk-infra).
 
 ## Features
