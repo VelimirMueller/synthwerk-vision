@@ -126,6 +126,7 @@ def test_readyz_optional_dependency_down_200_degraded(settings: Settings, tmp_pa
         data_dir.chmod(0o700)
 
     assert (response.status_code, response.json()["status"]) == (200, "degraded")
+    assert contract_errors("Readiness", response.json()) == []
     assert response.json()["checks"][1] == {
         "name": "data_dir",
         "status": "degraded",
