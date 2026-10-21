@@ -8,7 +8,7 @@ paths: ["src/synthwerk_vision/feedback.py"]
 api: ["POST /v1/feedback"]
 events: []
 mcp: []
-updated: 2026-10-09
+updated: 2026-10-21
 ---
 
 # Picture corrections

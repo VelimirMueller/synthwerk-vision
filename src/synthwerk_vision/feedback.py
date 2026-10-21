@@ -59,13 +59,17 @@ class FeedbackStore:
 
     def refresh(self) -> None:
         """Reload when the database changed on disk, e.g. written by another worker process."""
-        if signature(self._path) == self._signature:
+        current = signature(self._path)
+        if current == self._signature:
             return
         with self._lock:
+            # Take the signature before the query: a row written in between then only
+            # costs one extra reload, instead of hiding behind an already-current signature.
+            current = signature(self._path)
             with closing(self._connect()) as db:
                 rows = db.execute("SELECT id, dhash, label_id FROM feedback ORDER BY id").fetchall()
             self._entries = tuple(Feedback(*row) for row in rows)
-            self._signature = signature(self._path)
+            self._signature = current
 
     def __len__(self) -> int:
         return len(self._entries)
