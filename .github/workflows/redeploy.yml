@@ -19,8 +19,12 @@ permissions: {}
 
 jobs:
   deploy:
-    permissions: {}
-    uses: VelimirMueller/synthwerk-blueprint/.github/workflows/deploy.yml@f49de8ebd0b5f6b3655b1a04ef6a31a02022304f
+    # The digest must still carry build provenance from a main build of this repo.
+    permissions:
+      contents: read
+      attestations: read
+      packages: read
+    uses: VelimirMueller/synthwerk-blueprint/.github/workflows/deploy.yml@7ff9be29e127cacadec6489f73daf11d94e0d580
     with:
       environment: ${{ inputs.environment }}
       image: ghcr.io/velimirmueller/synthwerk-vision

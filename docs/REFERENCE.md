@@ -367,7 +367,8 @@ tests/                           unit tests with fakes, real-model tests (skip w
     That digest goes to **stg**, then to **prd** after a manual approval.
 - Each deploy runs the blueprint
   [`deploy.yml`](https://github.com/VelimirMueller/synthwerk-blueprint/blob/main/.github/workflows/deploy.yml):
-  SSH to the host, `docker compose up` service `vision` in `/opt/synthwerk/vision` with the image
+  verify the digest's build provenance (`gh attestation verify`: signed by the blueprint `image.yml`,
+  this repo, `main`, the build commit), SSH to the host, `docker compose up` service `vision` in `/opt/synthwerk/vision` with the image
   pinned by digest, and fail unless the running container has that digest.
 - Rollback: run [`redeploy.yml`](.github/workflows/redeploy.yml) with the environment and the
   previous digest. It never builds.
