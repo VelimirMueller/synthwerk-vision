@@ -109,3 +109,40 @@ def test_sessions_never_busy_spin() -> None:
     assert options.get_session_config_entry("session.intra_op.allow_spinning") == "0"
     assert options.get_session_config_entry("session.inter_op.allow_spinning") == "0"
     assert options.intra_op_num_threads == 3
+
+
+def test_feedback_refresh_loads_a_row_written_during_the_reload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from synthwerk_vision.feedback import FeedbackStore
+
+    path = tmp_path / "feedback.sqlite3"
+    worker_a, worker_b = FeedbackStore(path), FeedbackStore(path)
+    worker_b.add("sha-1", "0" * 16, "label-1")
+    connect = worker_a._connect
+
+    class WriteAfterSelect:
+        """Worker B writes right after worker A's SELECT, before A reads the signature."""
+
+        def __init__(self) -> None:
+            self._db = connect()
+
+        def execute(self, sql: str) -> "WriteAfterSelect":
+            self._rows = self._db.execute(sql).fetchall()
+            worker_b.add("sha-2", "f" * 16, "label-2")
+            return self
+
+        def fetchall(self) -> list[tuple[int, str, str]]:
+            return self._rows
+
+        def close(self) -> None:
+            self._db.close()
+
+    monkeypatch.setattr(worker_a, "_connect", WriteAfterSelect)
+    worker_a.refresh()
+    monkeypatch.setattr(worker_a, "_connect", connect)
+    assert len(worker_a) == 1, "the row written during the reload is not in this snapshot"
+
+    worker_a.refresh()
+
+    assert len(worker_a) == 2, "the next refresh() must load the row written during the reload"
