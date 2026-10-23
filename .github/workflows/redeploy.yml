@@ -1,7 +1,10 @@
 # Deploy a digest that was built before. Rollback = run this with the previous digest
 # (Actions tab, "Run workflow"). It never builds. Previous digests: deploy.log or
-# compose.digest.prev.yaml in /opt/synthwerk/vision on the host, or an earlier deliver run.
+# compose.digest.prev.yaml in /opt/synthwerk/vision on the host, or an earlier deploy run.
+# Kept as an exception (fleet.yml WF-FILE-02): fleet-workflows has no rollback by digest. It uses
+# the DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY and DEPLOY_KNOWN_HOSTS secrets of the environment.
 name: redeploy
+run-name: redeploy · ${{ inputs.environment }} · ${{ inputs.digest }}
 
 on:
   workflow_dispatch:
@@ -17,9 +20,18 @@ on:
 
 permissions: {}
 
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: redeploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
 jobs:
-  deploy:
-    # The digest must still carry build provenance from a main build of this repo.
+  # The digest must still carry build provenance from a main build of this repo (blueprint image.yml).
+  redeploy:
+    if: github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
       attestations: read
