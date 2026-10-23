@@ -68,5 +68,12 @@ module = ["onnxruntime.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-addopts = "--cov=synthwerk_vision --cov-report=term-missing --cov-fail-under=90"
+addopts = "--cov=synthwerk_vision --cov-report=term-missing"
 testpaths = ["tests"]
+
+# Coverage floor (fleet-standard CI-UNIT-02/03): statements and branches together.
+[tool.coverage.run]
+branch = true
+
+[tool.coverage.report]
+fail_under = 90

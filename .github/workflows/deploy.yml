@@ -1,0 +1,63 @@
+# Deploy the develop SHA to dev: build once, publish, deploy (CI-DEPLOY-*). Start it by hand
+# on develop: gh workflow run deploy.yml --ref develop
+# The image is ghcr.io/velimirmueller/synthwerk-vision:<sha>; scripts/deploy/deploy.sh pins its
+# digest on the VPS (/opt/synthwerk/vision). Rollback or a redeploy of an older digest: redeploy.yml.
+name: deploy
+run-name: deploy · dev · ${{ github.sha }}
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      env: ${{ steps.resolve.outputs.env }}
+    steps:
+      - name: Resolve the environment from the ref
+        id: resolve
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          [ "$REF" = "refs/heads/develop" ] || { echo "::error::deploy-dev runs only on develop"; exit 1; }
+          echo "env=dev" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: setup
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      packages: write
+      checks: read
+      pull-requests: read
+    uses: VelimirMueller/fleet-workflows/.github/workflows/_build-publish.yml@v0.0.1
+    with:
+      stack: generic
+      image: true
+
+  deploy-dev:
+    needs: [setup, build]
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    uses: VelimirMueller/fleet-workflows/.github/workflows/_deploy-run.yml@v0.0.1
+    with:
+      environment: ${{ needs.setup.outputs.env }}
+      github-environment: dev
+      # Reads DEPLOY_ENV of the dev environment. No health URL: the service listens on the
+      # host's 127.0.0.1 only; deploy.sh checks the running digest over SSH (fleet.yml CI-ENV-06).
+      deploy-command: scripts/deploy/deploy.sh
