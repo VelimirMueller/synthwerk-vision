@@ -338,7 +338,7 @@ tests/                           unit tests with fakes, real-model tests (skip w
 
 - Do not run two ONNX Runtime processes at once for a benchmark. They slow each other down.
 - CI: [`ci.yml`](.github/workflows/ci.yml) follows the fleet standard and calls
-  [`fleet-workflows@v0.0.1`](https://github.com/VelimirMueller/fleet-workflows) on pull requests:
+  [`fleet-workflows@v0.0.2`](https://github.com/VelimirMueller/fleet-workflows) on pull requests:
   - `lint`: ruff check, ruff format, mypy strict, actionlint and zizmor.
   - `unit`: pytest without weights, coverage floor 90 % (`pyproject.toml`).
   - `build`: builds the MobileNet image and checks that `/readyz` answers 200
