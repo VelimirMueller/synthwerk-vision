@@ -1,105 +1,167 @@
-# Thin caller of the synthwerk blueprint (S-E0-07) plus two local jobs the blueprint
-# does not cover: the real-model tests with the eval gate, and the container smoke test.
-# Required checks for the ruleset: "ci / required" (blueprint jobs) and "gate" (all jobs).
+# Fleet standard ci.yml (fleet-standard templates/deploys/public) plus the model job: the real
+# SigLIP 2 + MobileNetV2 weights, the full test suite and the eval gate. The model job is an
+# exception (fleet.yml WF-NAME-02): no fleet stage fetches model weights or runs an eval.
+# Required check for the ruleset: "conclusion".
 name: ci
 
 on:
   pull_request:
-  push:
-    branches: [main]
-    tags: ["v*"]
+    branches: [develop, main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      e2e:
+        description: Run the e2e stage
+        type: boolean
+        default: false
 
 permissions: {}
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 defaults:
   run:
-    shell: bash --noprofile --norc -euo pipefail {0}
+    shell: bash
+
+concurrency:
+  group: ci-${{ github.event.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  # Blueprint: ruff check + format, mypy strict, pytest (without model weights:
-  # the real-model tests skip there and run in the "model" job below).
-  ci:
+  changes:
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
-    uses: VelimirMueller/synthwerk-blueprint/.github/workflows/py-ci.yml@v1
-    with:
-      python-version: "3.14" # 3.14 wheels verified 2026-10-09: onnxruntime 1.30, numpy, pillow, tokenizers (abi3)
+      pull-requests: read
+    outputs:
+      code: ${{ github.event_name != 'pull_request' || steps.filter.outputs.code == 'true' }}
+    steps:
+      - name: Detect code changes
+        id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        with:
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '!**/*.md'
+              - '!docs/**'
+              - '!LICENSE'
+              - '!.github/ISSUE_TEMPLATE/**'
 
-  # Local: real SigLIP 2 + MobileNetV2 weights, full test suite, eval gate (>= 90 %).
+  lint:
+    needs: changes
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.code == 'true' }}
+    permissions:
+      contents: read
+    uses: VelimirMueller/fleet-workflows/.github/workflows/_ci-lint.yml@v0.0.2
+    with:
+      stack: python
+      # mypy without a path reads files = ["src", "tests"] from pyproject.toml (strict).
+      command: ruff check . && ruff format --check . && mypy
+
+  unit:
+    needs: [changes, lint]
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.code == 'true' }}
+    permissions:
+      contents: read
+    uses: VelimirMueller/fleet-workflows/.github/workflows/_ci-unit.yml@v0.0.2
+    with:
+      stack: python
+      # pyproject.toml addopts measure synthwerk_vision only; the real-model tests skip here.
+      command: pytest --cov-branch --cov-report=lcov:coverage/lcov.info
+
+  e2e:
+    needs: [changes, unit]
+    if: ${{ !failure() && !cancelled() && github.event_name == 'workflow_dispatch' && inputs.e2e }}
+    permissions:
+      contents: read
+    uses: VelimirMueller/fleet-workflows/.github/workflows/_ci-e2e.yml@v0.0.2
+    with:
+      stack: python
+      # No browser suite: the full pytest run with the MobileNet weights, as JUnit.
+      command: python scripts/fetch_model.py mobilenet && pytest --junitxml=e2e-junit.xml --cov-fail-under=0
+
+  build:
+    needs: [changes, e2e]
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.code == 'true' }}
+    permissions:
+      contents: read
+    uses: VelimirMueller/fleet-workflows/.github/workflows/_ci-build.yml@v0.0.2
+    with:
+      # The small MobileNet image must answer /readyz, then the default SigLIP image builds.
+      stack: generic
+      command: scripts/docker-smoke.sh
+      image: true
+
+  # Real SigLIP 2 + MobileNetV2 weights, full test suite, eval gate (>= 90 %).
   model:
+    needs: [changes, lint]
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out the source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: "0.11.30"
           python-version: "3.14"
           enable-cache: true
-      - run: uv sync --frozen
-      - name: Cache model weights
+      - name: Install the dependencies
+        run: uv sync --frozen
+      - name: Restore the model weights
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: models
           key: models-${{ hashFiles('scripts/fetch_model.py') }}
-      - run: uv run --frozen python scripts/fetch_model.py
-      - name: pytest (real-model tests included)
+      - name: Fetch the model weights
+        run: uv run --frozen python scripts/fetch_model.py
+      - name: Run pytest with the real-model tests
         run: uv run --frozen pytest
-      - name: Cache eval images
+      - name: Restore the eval images
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: eval/images
           key: eval-images-${{ hashFiles('eval/manifest.yaml') }}
-      - name: Eval gate (SigLIP root-topic accuracy >= 90 %)
+      - name: Run the eval gate (SigLIP root-topic accuracy of 90 % or more)
         run: |
           uv run --frozen python scripts/evaluate.py --min-topic-accuracy 0.9 | tee eval-report.md
           cat eval-report.md >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload eval report
+      - name: Upload the eval report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: eval-report
           path: eval/reports/
+          retention-days: 7
 
-  # Local: build the small MobileNet image and check that /readyz answers 200 (model loaded).
-  docker-smoke:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - run: docker build --build-arg BACKEND=mobilenet --build-arg COMMIT="$GITHUB_SHA" -t synthwerk-vision:ci .
-      - name: Smoke test container
-        run: |
-          docker run -d --rm --name api -p 8000:8000 synthwerk-vision:ci
-          for _ in $(seq 1 30); do curl -sf localhost:8000/readyz && exit 0; sleep 1; done
-          docker logs api
-          exit 1
-
-  # One check over the blueprint and the local jobs ("ci / required" covers the blueprint only).
-  gate:
+  conclusion:
+    needs: [changes, lint, unit, e2e, build, model]
     if: always()
-    needs: [ci, model, docker-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
     steps:
-      - name: All jobs passed
+      - name: Fail when a job failed or a required stage was skipped
         env:
+          CODE: ${{ needs.changes.outputs.code }}
           RESULTS: ${{ join(needs.*.result, ' ') }}
+          LINT: ${{ needs.lint.result }}
+          UNIT: ${{ needs.unit.result }}
+          BUILD: ${{ needs.build.result }}
+          MODEL: ${{ needs.model.result }}
         run: |
-          echo "Results: $RESULTS"
-          for result in $RESULTS; do
-            [[ "$result" == "success" ]] || exit 1
+          for r in $RESULTS; do
+            case "$r" in success|skipped) ;; *) echo "::error::a job ended as $r"; exit 1 ;; esac
           done
+          if [ "$CODE" = "true" ]; then
+            for r in "$LINT" "$UNIT" "$BUILD" "$MODEL"; do
+              [ "$r" = "success" ] || { echo "::error::a required stage did not run"; exit 1; }
+            done
+          fi

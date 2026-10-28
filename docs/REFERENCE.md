@@ -337,17 +337,18 @@ tests/                           unit tests with fakes, real-model tests (skip w
 | Git hooks | `uv run pre-commit install` |
 
 - Do not run two ONNX Runtime processes at once for a benchmark. They slow each other down.
-- CI: [`ci.yml`](.github/workflows/ci.yml) calls the blueprint workflow
-  [`py-ci.yml@v1`](https://github.com/VelimirMueller/synthwerk-blueprint/blob/main/.github/workflows/py-ci.yml)
-  (ruff, mypy strict, pytest without weights). Two local jobs add the rest:
-  - `model`: fetches the weights, runs all tests with the real models, and runs the eval gate.
-  - `docker-smoke`: builds the MobileNet image and checks that `/readyz` answers 200.
-  - `gate` passes only when all jobs pass.
-- [`deliver.yml`](.github/workflows/deliver.yml) calls the blueprint
-  [`image.yml@v1`](https://github.com/VelimirMueller/synthwerk-blueprint/blob/main/.github/workflows/image.yml)
-  for the default SigLIP image: build, SBOM, Trivy scan, then the deploy chain (see Deploy).
+- CI: [`ci.yml`](.github/workflows/ci.yml) follows the fleet standard and calls
+  [`fleet-workflows@v0.0.2`](https://github.com/VelimirMueller/fleet-workflows) on pull requests:
+  - `lint`: ruff check, ruff format, mypy strict, actionlint and zizmor.
+  - `unit`: pytest without weights, coverage floor 90 % (`pyproject.toml`).
+  - `build`: builds the MobileNet image and checks that `/readyz` answers 200
+    (`scripts/docker-smoke.sh`), then builds the default SigLIP image. Nothing is pushed.
+  - `model` (local job): fetches the weights, runs all tests with the real models, and runs the eval gate.
+  - `e2e` runs only on demand (`workflow_dispatch` with `e2e: true`) and in `promote.yml`.
+  - `conclusion` passes only when all jobs pass. It is the required check.
 - Dependabot watches Python, Actions and Docker dependencies.
-- Workflow runs: [ci](https://github.com/VelimirMueller/synthwerk-vision/actions/workflows/ci.yml) · [deliver](https://github.com/VelimirMueller/synthwerk-vision/actions/workflows/deliver.yml).
+- Exceptions to the fleet standard are in [`fleet.yml`](fleet.yml).
+- Workflow runs: [ci](https://github.com/VelimirMueller/synthwerk-vision/actions/workflows/ci.yml) · [deploy](https://github.com/VelimirMueller/synthwerk-vision/actions/workflows/deploy.yml) · [promote](https://github.com/VelimirMueller/synthwerk-vision/actions/workflows/promote.yml).
 
 ### Branches
 
@@ -356,27 +357,28 @@ tests/                           unit tests with fakes, real-model tests (skip w
 
 ## Deploy
 
-- No host exists yet ([synthwerk#7](https://github.com/VelimirMueller/synthwerk/issues/7),
-  [synthwerk#8](https://github.com/VelimirMueller/synthwerk/issues/8)). Every deploy job skips
-  with the notice `deploy skipped` until the environment has its `DEPLOY_*` secrets.
-- Build once, promote by digest ([synthwerk#27](https://github.com/VelimirMueller/synthwerk/issues/27)),
-  in [`deliver.yml`](.github/workflows/deliver.yml):
-  - Push to `main`: build, push `ghcr.io/velimirmueller/synthwerk-vision`, sign with cosign,
-    deploy that digest to **dev**.
-  - Tag `vX.Y.Z`: no build. The tag gets the digest that `main` built for the same commit.
-    That digest goes to **stg**, then to **prd** after a manual approval.
-- Each deploy runs the blueprint
-  [`deploy.yml`](https://github.com/VelimirMueller/synthwerk-blueprint/blob/main/.github/workflows/deploy.yml):
-  verify the digest's build provenance (`gh attestation verify`: signed by the blueprint `image.yml`,
-  this repo, `main`, the build commit), SSH to the host, `docker compose up` service `vision` in `/opt/synthwerk/vision` with the image
-  pinned by digest, and fail unless the running container has that digest.
+- Every deploy starts by hand. A push, a merge or a tag deploys nothing.
+- Build once, promote by digest:
+  - [`deploy.yml`](.github/workflows/deploy.yml) on `develop`: build and push
+    `ghcr.io/velimirmueller/synthwerk-vision:<sha>`, then deploy it to **dev**.
+  - [`promote.yml`](.github/workflows/promote.yml) on `develop`, target `stg` then `prd`:
+    e2e (stg only), approval, fast-forward `stage` or `main`, deploy the same image.
+- Each deploy runs [`scripts/deploy/deploy.sh`](scripts/deploy/deploy.sh): resolve the digest of
+  the SHA tag, SSH to the host, `docker compose up` service `vision` in `/opt/synthwerk/vision` with
+  the image pinned by digest, and fail unless the running container has that digest
+  ([`scripts/deploy/remote.sh`](scripts/deploy/remote.sh), the blueprint host contract).
+- Secrets: one secret `DEPLOY_ENV` per environment with the lines `DEPLOY_HOST`, `DEPLOY_USER`,
+  `DEPLOY_SSH_KEY_B64`, `DEPLOY_KNOWN_HOSTS_B64` (both base64 on one line) and optional
+  `DEPLOY_PORT`, `DEPLOY_COMPOSE_DIR`. stg and prd need their own host or compose dir.
 - Rollback: run [`redeploy.yml`](.github/workflows/redeploy.yml) with the environment and the
-  previous digest. It never builds.
-- Repo settings (once): environments `dev`, `stg`, `prd` with the secrets `DEPLOY_HOST`,
-  `DEPLOY_USER`, `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`; a required reviewer on `prd`.
-  Host contract: blueprint
+  previous digest. It never builds. It uses the blueprint
+  [`deploy.yml`](https://github.com/VelimirMueller/synthwerk-blueprint/blob/main/.github/workflows/deploy.yml)
+  and the secrets `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`. It verifies
+  the build provenance of the blueprint `image.yml`, so it takes only digests built before the fleet
+  standard.
+- Images from `deploy.yml` have no `COMMIT` build arg yet: `/readyz` reports `0000000` for them.
+- Host contract: blueprint
   [`docs/conventions/deploy.md`](https://github.com/VelimirMueller/synthwerk-blueprint/blob/main/docs/conventions/deploy.md).
-- `/readyz` reports the real commit: the image build passes `COMMIT=<sha>`.
 - Infrastructure: [synthwerk-infra](https://github.com/VelimirMueller/synthwerk-infra).
 
 ## Features
