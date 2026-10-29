@@ -32,7 +32,7 @@ updated: 2026-10-29
 
 ## How to use
 
-1. Send the image as `multipart/form-data` in the field `image` to `POST /v1/images`.
+1. Send the image as `multipart/form-data` in the field `image` to `POST /v1/images`, with a widget token. See [Widget token](widget-token-auth.md).
 2. Keep the `id` from the response.
 
 ## Rules and limits
@@ -56,9 +56,12 @@ updated: 2026-10-29
 
 | Status | Problem type | Cause |
 |---|---|---|
+| 401 | None (FastAPI `detail`) | No valid widget token. See [Widget token](widget-token-auth.md). |
+| 403 | None (FastAPI `detail`) | `Origin` is not the origin of the widget token. |
 | 413 | None (FastAPI `detail`) | The image is larger than the upload limit or the pixel limit. |
 | 415 | None (FastAPI `detail`) | The bytes are not a JPEG, PNG or WebP image. |
 | 422 | None (FastAPI `detail`) | The request has no `image` field, or the file is empty. |
+| 503 | None (FastAPI `detail`) | The token keys cannot be loaded. |
 | 507 | None (FastAPI `detail`) | The upload folder reached its byte or file quota. |
 
 ## Tests
@@ -76,3 +79,4 @@ updated: 2026-10-29
 |---|---|
 | 2026-10-09 | Rename to `synthwerk_vision`. The settings use the prefix `SYNTHWERK_VISION_`. |
 | 2026-10-29 | Byte and file quota for the upload folder; 507 when it is full (#19). |
+| 2026-10-29 | The route needs a widget token (#76). |

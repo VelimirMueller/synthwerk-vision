@@ -24,8 +24,8 @@ flowchart LR
 |--------|-----------------------|---------------------------------------------|---------|---------------|
 | GET    | `/healthz`            | Liveness: the process runs (no checks)      | 200     |               |
 | GET    | `/readyz`             | Readiness: `model` check (+ `data_dir` with admin on) | 200 | 503 |
-| POST   | `/v1/images`          | Store an image, return its generated id     | 201     | 413, 415, 422 |
-| POST   | `/v1/classifications` | Classify an image (not stored)              | 200     | 413, 415, 422, 503 |
+| POST   | `/v1/images`          | Store an image, return its generated id     | 201     | 401, 403, 413, 415, 422, 503 |
+| POST   | `/v1/classifications` | Classify an image (not stored)              | 200     | 401, 403, 413, 415, 422, 503 |
 | *admin* | `/v1/labels`, `/v1/feedback` | See [Runtime labels and corrections](#runtime-labels-and-corrections) | | 401, 404, 409 |
 
 - `/healthz` and `/readyz` follow the Synthwerk health contract (`openapi/_shared/health.yaml` in
@@ -36,6 +36,9 @@ flowchart LR
   - `data_dir`: only when `SYNTHWERK_VISION_ADMIN_TOKEN` is set. `degraded` when the data
     directory is not writable (classification still works, runtime labels and corrections fail).
 - Both POST endpoints take `multipart/form-data` with one field, `image` (JPEG, PNG or WebP).
+- Both POST endpoints need `Authorization: Bearer <widget token>` from synthwerk-identity and the
+  matching `Origin` header (#76). No valid token: 401. Other origin: 403. See
+  [Widget token](docs/features/widget-token-auth.md).
 
 Example: a photo of a wooden hut in a rice field (real output, `top_k=3`, ids shortened):
 
@@ -255,6 +258,10 @@ unavailable. The fix is then to rebuild the set: `scripts/build_eval_manifest.py
 | `SYNTHWERK_VISION_UPLOAD_QUOTA_FILES` | `10000`: files kept in the upload dir         |
 | `SYNTHWERK_VISION_DATA_DIR`         | `data` (runtime labels + corrections)          |
 | `SYNTHWERK_VISION_ADMIN_TOKEN`      | unset: admin endpoints disabled                |
+| `SYNTHWERK_VISION_OIDC_ISSUER`      | **required**: `iss` of the widget token (identity widget issuer) |
+| `SYNTHWERK_VISION_JWKS_URL`         | **required**: `<identity>/.well-known/jwks.json` |
+| `SYNTHWERK_VISION_OIDC_AUDIENCE`    | `synthwerk-api` (comma-separated list)         |
+| `SYNTHWERK_VISION_AUTH_DISABLED`    | `false`; `true` only with env `local` or `ci` (no token on classification and upload) |
 | `SYNTHWERK_VISION_MAX_UPLOAD_BYTES` | `5242880` (5 MiB)                              |
 | `SYNTHWERK_VISION_MAX_IMAGE_PIXELS` | `40000000`                                     |
 | `SYNTHWERK_VISION_BACKEND`          | `siglip` (or `mobilenet`)                      |
@@ -400,6 +407,7 @@ tests/                           unit tests with fakes, real-model tests (skip w
 | [Picture corrections](docs/features/picture-corrections.md) | beta |
 | [Classification eval gate](docs/features/classification-eval.md) | stable |
 | [Health and telemetry](docs/features/health-and-telemetry.md) | beta |
+| [Widget token on classification and upload](docs/features/widget-token-auth.md) | beta |
 
 ## Model and data
 
@@ -424,8 +432,9 @@ here with its source and license before it is used.
 - CORS allows only the configured origins, without credentials.
 - Endpoints that change server state (`/v1/labels`, `/v1/feedback`) need a bearer token
   (`SYNTHWERK_VISION_ADMIN_TOKEN`, compared in constant time) and are absent without one.
-- Classification and uploads are unauthenticated. Put the service behind a gateway with auth
-  and rate limits before you expose it publicly.
+- Classification and uploads need a widget token from synthwerk-identity (ES256, origin-bound,
+  at most 15 min). The service does not start without the token settings, unless
+  `SYNTHWERK_VISION_AUTH_DISABLED=true` in `local` or `ci`. Rate limits still need a gateway.
 - `POST /v1/images` keeps at most `SYNTHWERK_VISION_UPLOAD_QUOTA_BYTES` and
   `SYNTHWERK_VISION_UPLOAD_QUOTA_FILES` in the upload dir. When the quota is reached, it answers
   507 and stores nothing. Nothing deletes old uploads: free space by hand or raise the quota.

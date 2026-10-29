@@ -21,6 +21,7 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi==0.66b1",
     "structlog==26.1.0",
     "opentelemetry-instrumentation-logging==0.66b1",
+    "pyjwt[crypto]>=2.10",
 ]
 
 [dependency-groups]

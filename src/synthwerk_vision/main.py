@@ -14,6 +14,7 @@ from fastapi.responses import PlainTextResponse
 
 from synthwerk_vision import __version__
 from synthwerk_vision.api import admin
+from synthwerk_vision.api.auth import build_verifier
 from synthwerk_vision.api.routes import router
 from synthwerk_vision.classifier import Classifier, ModelNotAvailableError, OnnxClassifier
 from synthwerk_vision.feedback import FeedbackStore
@@ -126,6 +127,7 @@ def create_app(
     settings = settings or get_settings()
     resource = build_resource(settings)
     configure_logging(settings, log_fields(resource))
+    verifier = build_verifier(settings)  # before telemetry: a config error starts nothing
     telemetry = telemetry or setup_telemetry(resource)
 
     @asynccontextmanager
@@ -150,6 +152,7 @@ def create_app(
 
     app = FastAPI(title="Synthwerk Vision API", version=__version__, lifespan=lifespan)
     app.state.commit = settings.commit
+    app.state.verifier = verifier
     app.state.readiness_checks = [ReadinessCheck("model", _model_ready)]
     if settings.admin_token is not None:
         app.state.readiness_checks.append(_data_dir_check(settings.data_dir))

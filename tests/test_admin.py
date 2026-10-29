@@ -14,6 +14,7 @@ from synthwerk_vision.main import create_app, runtime_labels
 from synthwerk_vision.platform.config import Settings, get_settings
 from synthwerk_vision.storage import LocalImageStorage
 from synthwerk_vision.taxonomy import Taxonomy
+from tests.conftest import widget_headers
 
 TOKEN = "s3cret-admin-token"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
@@ -85,7 +86,7 @@ def open_client(settings: Settings) -> Iterator[TestClient]:
         classifier=OpenFakeClassifier(taxonomy),
     )
     app.dependency_overrides[get_settings] = lambda: settings
-    with TestClient(app) as client:
+    with TestClient(app, headers=widget_headers()) as client:
         yield client
 
 

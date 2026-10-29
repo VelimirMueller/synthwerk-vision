@@ -50,6 +50,23 @@ class Settings(BaseSettings):
         default=None,
         description="Bearer token for /v1/labels and /v1/feedback; unset disables them.",
     )
+    oidc_issuer: str | None = Field(
+        default=None,
+        description="iss of the widget token: the public URL of synthwerk-identity. Required.",
+    )
+    oidc_audience: str = Field(
+        default="synthwerk-api",
+        description="Accepted aud values of the widget token, comma-separated.",
+    )
+    jwks_url: str | None = Field(
+        default=None,
+        description="Key set of the widget token: <identity>/.well-known/jwks.json. Required.",
+    )
+    auth_disabled: bool = Field(
+        default=False,
+        description="Local development only: no token on the classification and image routes. "
+        "Refused when SYNTHWERK_PLATFORM_ENV is dev, stg or prd.",
+    )
     max_upload_bytes: int = Field(default=5 * 1024 * 1024, gt=0)
     max_image_pixels: int = Field(default=40_000_000, gt=0)
     backend: Literal["siglip", "mobilenet"] = Field(

@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from starlette.concurrency import run_in_threadpool
 
+from synthwerk_vision.api.auth import TOKEN_ERRORS, require_widget_token
 from synthwerk_vision.feedback import FeedbackStore
 from synthwerk_vision.images import (
     InvalidImageError,
@@ -83,9 +84,11 @@ async def validated_image(
     status_code=status.HTTP_201_CREATED,
     tags=["images"],
     responses={
+        **TOKEN_ERRORS,
         **_IMAGE_ERRORS,
         507: {"model": ErrorOut, "description": "Upload storage quota reached"},
     },
+    dependencies=[Depends(require_widget_token)],
 )
 async def upload_image(
     image: Annotated[ValidatedImage, Depends(validated_image)],
@@ -111,7 +114,12 @@ async def upload_image(
 @router.post(
     "/v1/classifications",
     tags=["classification"],
-    responses={**_IMAGE_ERRORS, 503: {"model": ErrorOut, "description": "Model not loaded"}},
+    responses={
+        **TOKEN_ERRORS,
+        **_IMAGE_ERRORS,
+        503: {"model": ErrorOut, "description": "Model not loaded or token keys unavailable"},
+    },
+    dependencies=[Depends(require_widget_token)],
 )
 async def classify_image(
     request: Request,

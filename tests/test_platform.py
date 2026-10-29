@@ -28,7 +28,7 @@ from synthwerk_vision.platform.config import Settings
 from synthwerk_vision.platform.health import CheckResult, ReadinessCheck, _run
 from synthwerk_vision.platform.log import FORBIDDEN_KEYS, configure_logging
 from synthwerk_vision.platform.otel import Telemetry, build_resource, setup_telemetry
-from tests.conftest import FakeClassifier, make_image
+from tests.conftest import FakeClassifier, make_image, widget_headers
 
 CONTRACT = yaml.safe_load((Path(__file__).parent / "contracts" / "health.yaml").read_text())
 REQUIRED_LOG_FIELDS = {
@@ -78,7 +78,7 @@ def captured(settings: Settings) -> Iterator[tuple[TestClient, Captured]]:
     sink = Captured()
     app = create_app(settings, classifier=FakeClassifier(), telemetry=sink.telemetry)
     our_stdout_handler().setStream(sink.stdout)
-    with TestClient(app) as client:
+    with TestClient(app, headers=widget_headers()) as client:
         yield client, sink
 
 

@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from synthwerk_vision.main import create_app
 from synthwerk_vision.platform.config import Settings, get_settings
-from tests.conftest import FakeClassifier, make_image
+from tests.conftest import FakeClassifier, make_image, widget_headers
 
 
 def test_readyz_reports_model_state(client: TestClient, client_without_model: TestClient) -> None:
@@ -34,7 +34,7 @@ def test_upload_quota_reached_next_upload_refused_507(settings: Settings) -> Non
 
     app = create_app(full, classifier=FakeClassifier())  # storage built from the settings
     app.dependency_overrides[get_settings] = lambda: full
-    with TestClient(app) as client:
+    with TestClient(app, headers=widget_headers()) as client:
         stored = [client.post("/v1/images", files={"image": ("a.png", image, "image/png")})]
         stored.append(client.post("/v1/images", files={"image": ("b.png", image, "image/png")}))
         refused = client.post("/v1/images", files={"image": ("c.png", image, "image/png")})
