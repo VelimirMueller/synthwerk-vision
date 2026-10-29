@@ -39,7 +39,13 @@ ENDPOINTS = [("/v1/classifications", 200), ("/v1/images", 201)]
 def bare(settings: Settings) -> Iterator[TestClient]:
     """A client that sends no token and no Origin unless the test does."""
     app = create_app(
-        settings, storage=LocalImageStorage(settings.upload_dir), classifier=FakeClassifier()
+        settings,
+        storage=LocalImageStorage(
+            settings.upload_dir,
+            max_bytes=settings.upload_quota_bytes,
+            max_files=settings.upload_quota_files,
+        ),
+        classifier=FakeClassifier(),
     )
     app.dependency_overrides[get_settings] = lambda: settings
     with TestClient(app) as client:
@@ -287,7 +293,13 @@ def test_verifier_leeway_over_60s_refused() -> None:
 def test_auth_disabled_locally_no_token_needed(settings: Settings) -> None:
     local = settings.model_copy(update={"auth_disabled": True, "oidc_issuer": None})
     app = create_app(
-        local, storage=LocalImageStorage(local.upload_dir), classifier=FakeClassifier()
+        local,
+        storage=LocalImageStorage(
+            local.upload_dir,
+            max_bytes=local.upload_quota_bytes,
+            max_files=local.upload_quota_files,
+        ),
+        classifier=FakeClassifier(),
     )
     with TestClient(app) as client:
         assert post(client, "/v1/images").status_code == 201
