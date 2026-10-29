@@ -10,6 +10,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 
 from synthwerk_vision import __version__
 from synthwerk_vision.api import admin
@@ -166,7 +167,14 @@ def create_app(
         request.state.request_id = request_id
         request.state.started = time.perf_counter()
         with request_id_bound(request_id):
-            response = await call_next(request)
+            error: Exception | None = None
+            try:
+                response = await call_next(request)
+            except Exception as exc:
+                # Unhandled error: answer the 500 here (same body as Starlette's), so the
+                # response carries the request id and the request still gets its log line.
+                error = exc
+                response = PlainTextResponse("Internal Server Error", status_code=500)
             response.headers["X-Request-ID"] = request_id
             route = request.scope.get("route")
             fields: dict[str, object] = {
@@ -179,8 +187,12 @@ def create_app(
             }
             if route is not None:  # unmatched paths (404) get no route: never the raw path
                 fields["http.route"] = route.path
-            level = logging.DEBUG if request.url.path in HEALTH_PATHS else logging.INFO
-            logger.log(level, "request completed", extra=fields)
+            if error is not None:
+                fields["error.type"] = type(error).__qualname__
+                logger.error("request completed", extra=fields, exc_info=error)
+            else:
+                level = logging.DEBUG if request.url.path in HEALTH_PATHS else logging.INFO
+                logger.log(level, "request completed", extra=fields)
         return response
 
     app.include_router(health.router)

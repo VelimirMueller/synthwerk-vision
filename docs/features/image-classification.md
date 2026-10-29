@@ -8,7 +8,7 @@ paths: ["src/synthwerk_vision/main.py", "src/synthwerk_vision/platform/config.py
 api: ["POST /v1/classifications"]
 events: []
 mcp: []
-updated: 2026-10-21
+updated: 2026-10-29
 ---
 
 # Image classification
@@ -26,7 +26,7 @@ updated: 2026-10-21
 - The response contains the best label, the best root topic, the top-k labels and the topics.
 - The response sets `uncertain` to `true` when the best root topic scores below the limit.
 - The service does not store the image.
-- Every response has an `X-Request-ID` header. A classification response also has `request_id`.
+- Every response has an `X-Request-ID` header, a 500 too. A classification response also has `request_id`.
 - When the model files are missing, the service starts, and `/readyz` reports `down` (503). See [Health and telemetry](health-and-telemetry.md).
 - When the taxonomy is broken, the service does not start.
 
@@ -63,6 +63,7 @@ updated: 2026-10-21
 | 413 | None (FastAPI `detail`) | The image is larger than the upload limit or the pixel limit. |
 | 415 | None (FastAPI `detail`) | The bytes are not a JPEG, PNG or WebP image. |
 | 422 | None (FastAPI `detail`) | The request has no `image` field, or the file is empty. |
+| 500 | None (text `Internal Server Error`) | An unexpected error. Give the `X-Request-ID` to the operator. |
 | 503 | None (FastAPI `detail`) | The model is not loaded. |
 
 ## Tests
@@ -81,3 +82,4 @@ updated: 2026-10-21
 |---|---|
 | 2026-10-09 | Rename to `synthwerk_vision`. The settings use the prefix `SYNTHWERK_VISION_`. |
 | 2026-10-21 | `GET /health` is removed. `/readyz` reports the model state. The settings module moved to `platform/config.py` (#23). |
+| 2026-10-29 | A 500 response has the `X-Request-ID` header (#27). |

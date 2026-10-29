@@ -290,6 +290,9 @@ OpenTelemetry uses the `OTEL_*` names of the OTel spec, read from the process en
 - Each request writes one line `request completed` with `http.request.method`, `http.route`
   (the route template, never the raw path or query), `http.response.status_code` and
   `synthwerk.duration_ms`. `uvicorn.access` is off. `/healthz` and `/readyz` log at `DEBUG` only.
+- A request that ends in an unhandled error writes the same line at `ERROR`, with status 500,
+  `error.type` (the exception class) and the traceback in `exception`. The 500 response carries
+  `X-Request-ID`.
 - Keys such as `token`, `authorization`, `image` and `body` are dropped from every log record
   (full list: `FORBIDDEN_KEYS` in `platform/log.py`).
 - With `OTEL_EXPORTER_OTLP_ENDPOINT` set, traces (FastAPI instrumentation), metrics

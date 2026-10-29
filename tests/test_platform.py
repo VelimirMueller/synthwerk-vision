@@ -221,6 +221,35 @@ def test_log_line_path_with_id_route_template_not_raw_path(
     assert "token=abc" not in json.dumps(lines)
 
 
+def test_log_line_unhandled_error_500_with_error_field_and_request_id(
+    captured: tuple[TestClient, Captured],
+) -> None:
+    client, sink = captured
+
+    async def broken() -> None:
+        raise RuntimeError("boom")
+
+    client.app.add_api_route("/broken", broken)  # type: ignore[attr-defined]
+
+    response = client.get("/broken", headers={"X-Request-ID": "req-500"})
+
+    assert response.status_code == 500
+    assert response.headers["X-Request-ID"] == "req-500"
+    lines = [e for e in log_lines(sink.stdout) if e["msg"] == "request completed"]
+    assert len(lines) == 1
+    line = lines[0]
+    assert line.keys() >= REQUIRED_LOG_FIELDS
+    assert line["level"] == "ERROR"
+    assert line["event.name"] == "http.server.request"
+    assert line["http.request.method"] == "GET"
+    assert line["http.route"] == "/broken"
+    assert line["http.response.status_code"] == 500
+    assert line["error.type"] == "RuntimeError"
+    assert line["synthwerk.request_id"] == "req-500"
+    assert "synthwerk.duration_ms" in line
+    assert "RuntimeError: boom" in line["exception"]
+
+
 def test_log_line_forbidden_key_passed_dropped(captured: tuple[TestClient, Captured]) -> None:
     _, sink = captured
     forbidden = {key: "leak" for key in FORBIDDEN_KEYS}
