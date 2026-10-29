@@ -3,8 +3,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from synthwerk_vision.platform.config import Settings
-from tests.conftest import make_image
+from synthwerk_vision.main import create_app
+from synthwerk_vision.platform.config import Settings, get_settings
+from tests.conftest import FakeClassifier, make_image
 
 
 def test_readyz_reports_model_state(client: TestClient, client_without_model: TestClient) -> None:
@@ -25,6 +26,23 @@ def test_upload_stores_image_under_generated_id(client: TestClient, settings: Se
     assert body["content_type"] == "image/png"
     assert (body["width"], body["height"]) == (32, 24)
     assert (settings.upload_dir / f"{body['id']}.png").is_file()
+
+
+def test_upload_quota_reached_next_upload_refused_507(settings: Settings) -> None:
+    image = make_image()
+    full = settings.model_copy(update={"upload_quota_bytes": len(image) * 2})
+
+    app = create_app(full, classifier=FakeClassifier())  # storage built from the settings
+    app.dependency_overrides[get_settings] = lambda: full
+    with TestClient(app) as client:
+        stored = [client.post("/v1/images", files={"image": ("a.png", image, "image/png")})]
+        stored.append(client.post("/v1/images", files={"image": ("b.png", image, "image/png")}))
+        refused = client.post("/v1/images", files={"image": ("c.png", image, "image/png")})
+
+    assert [r.status_code for r in stored] == [201, 201]
+    assert refused.status_code == 507
+    assert refused.json() == {"detail": "upload storage quota reached"}
+    assert len(list(settings.upload_dir.iterdir())) == 2
 
 
 @pytest.mark.parametrize(

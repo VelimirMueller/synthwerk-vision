@@ -83,3 +83,4 @@ updated: 2026-10-29
 | 2026-10-09 | Rename to `synthwerk_vision`. The settings use the prefix `SYNTHWERK_VISION_`. |
 | 2026-10-21 | `GET /health` is removed. `/readyz` reports the model state. The settings module moved to `platform/config.py` (#23). |
 | 2026-10-29 | A 500 response has the `X-Request-ID` header (#27). |
+| 2026-10-29 | New settings `UPLOAD_QUOTA_BYTES` and `UPLOAD_QUOTA_FILES` for `POST /v1/images`. Classification does not change (#19). |

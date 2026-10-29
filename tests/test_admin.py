@@ -77,7 +77,11 @@ def open_client(settings: Settings) -> Iterator[TestClient]:
     taxonomy = runtime_labels(settings).load(lambda: Taxonomy.load(settings.taxonomy_path))
     app = create_app(
         settings,
-        storage=LocalImageStorage(settings.upload_dir),
+        storage=LocalImageStorage(
+            settings.upload_dir,
+            max_bytes=settings.upload_quota_bytes,
+            max_files=settings.upload_quota_files,
+        ),
         classifier=OpenFakeClassifier(taxonomy),
     )
     app.dependency_overrides[get_settings] = lambda: settings

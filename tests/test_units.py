@@ -9,7 +9,7 @@ from PIL import Image
 from synthwerk_vision.classifier import ModelNotAvailableError, OnnxClassifier, preprocess, softmax
 from synthwerk_vision.images import InvalidImageError, validate_image
 from synthwerk_vision.service import ClassificationService
-from synthwerk_vision.storage import LocalImageStorage
+from synthwerk_vision.storage import LocalImageStorage, StorageFullError
 from synthwerk_vision.taxonomy import Taxonomy
 from tests.conftest import make_image
 
@@ -38,12 +38,37 @@ def test_validate_image_rejects_pixel_bombs() -> None:
 
 
 def test_storage_writes_unique_files(tmp_path: Path) -> None:
-    storage = LocalImageStorage(tmp_path)
+    storage = LocalImageStorage(tmp_path, max_bytes=1024, max_files=10)
 
     first, second = storage.save(b"a", "png"), storage.save(b"b", "png")
 
     assert first != second
     assert (tmp_path / f"{first}.png").read_bytes() == b"a"
+
+
+@pytest.mark.parametrize(
+    ("max_bytes", "max_files", "second"),
+    [(10, 100, b"bbbbbb"), (100, 1, b"b")],
+    ids=["byte quota", "file quota"],
+)
+def test_storage_quota_reached_next_save_refused(
+    tmp_path: Path, max_bytes: int, max_files: int, second: bytes
+) -> None:
+    storage = LocalImageStorage(tmp_path, max_bytes=max_bytes, max_files=max_files)
+    storage.save(b"aaaaa", "png")
+
+    with pytest.raises(StorageFullError, match="quota"):
+        storage.save(second, "png")
+    assert len(list(tmp_path.iterdir())) == 1
+
+
+def test_storage_quota_counts_files_of_other_workers(tmp_path: Path) -> None:
+    (tmp_path / "written-by-another-worker.png").write_bytes(b"x" * 8)
+    storage = LocalImageStorage(tmp_path, max_bytes=10, max_files=100)
+
+    with pytest.raises(StorageFullError):
+        storage.save(b"abc", "png")
+    assert storage.save(b"ab", "png")
 
 
 def test_classifier_reports_missing_model(tmp_path: Path) -> None:
@@ -63,7 +88,7 @@ def test_storage_removes_partial_file_on_write_error(
     monkeypatch.setattr("synthwerk_vision.storage.os.fsync", fail)
 
     with pytest.raises(OSError, match="disk full"):
-        LocalImageStorage(tmp_path).save(b"a", "png")
+        LocalImageStorage(tmp_path, max_bytes=1024, max_files=10).save(b"a", "png")
     assert list(tmp_path.iterdir()) == []
 
 

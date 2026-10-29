@@ -251,6 +251,8 @@ unavailable. The fix is then to rebuild the set: `scripts/build_eval_manifest.py
 |------------------------------|------------------------------------------------|
 | `SYNTHWERK_VISION_CORS_ORIGINS`     | `["http://localhost:5173","http://localhost:8080"]` |
 | `SYNTHWERK_VISION_UPLOAD_DIR`       | `uploads`                                      |
+| `SYNTHWERK_VISION_UPLOAD_QUOTA_BYTES` | `1073741824` (1 GiB): bytes kept in the upload dir |
+| `SYNTHWERK_VISION_UPLOAD_QUOTA_FILES` | `10000`: files kept in the upload dir         |
 | `SYNTHWERK_VISION_DATA_DIR`         | `data` (runtime labels + corrections)          |
 | `SYNTHWERK_VISION_ADMIN_TOKEN`      | unset: admin endpoints disabled                |
 | `SYNTHWERK_VISION_MAX_UPLOAD_BYTES` | `5242880` (5 MiB)                              |
@@ -424,6 +426,9 @@ here with its source and license before it is used.
   (`SYNTHWERK_VISION_ADMIN_TOKEN`, compared in constant time) and are absent without one.
 - Classification and uploads are unauthenticated. Put the service behind a gateway with auth
   and rate limits before you expose it publicly.
+- `POST /v1/images` keeps at most `SYNTHWERK_VISION_UPLOAD_QUOTA_BYTES` and
+  `SYNTHWERK_VISION_UPLOAD_QUOTA_FILES` in the upload dir. When the quota is reached, it answers
+  507 and stores nothing. Nothing deletes old uploads: free space by hand or raise the quota.
 - Report a vulnerability through a private GitHub security advisory on this repo.
 
 ## Roadmap
