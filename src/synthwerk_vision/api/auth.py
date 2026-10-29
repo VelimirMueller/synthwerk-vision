@@ -37,6 +37,7 @@ _DEV_ONLY_ENVS = {"local", "ci"}
 TOKEN_ERRORS: dict[int | str, dict[str, object]] = {
     401: {"model": ErrorOut, "description": "No valid widget token"},
     403: {"model": ErrorOut, "description": "Origin does not match the widget token"},
+    503: {"model": ErrorOut, "description": "Token keys unavailable"},
 }
 
 
