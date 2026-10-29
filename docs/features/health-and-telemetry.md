@@ -8,7 +8,7 @@ paths: ["src/synthwerk_vision/platform/__init__.py", "src/synthwerk_vision/platf
 api: ["GET /healthz", "GET /readyz"]
 events: []
 mcp: []
-updated: 2026-10-21
+updated: 2026-10-29
 ---
 
 # Health and telemetry
@@ -28,6 +28,8 @@ updated: 2026-10-21
 - The body follows the health contract `openapi/_shared/health.yaml` in synthwerk-contracts.
 - Every log record is one JSON object on stdout. uvicorn and library loggers use the same handler.
 - Each request writes one `request completed` line with the route template, never the raw path.
+- A request that ends in an unhandled error also writes this line. The line has level `ERROR`, status 500, `error.type` and the traceback in `exception`.
+- The service then answers 500 with the `X-Request-ID` header.
 - The service drops forbidden keys (`token`, `authorization`, `image`, `body` and others) from every log record.
 - The FastAPI instrumentation makes one span per request. `/healthz` and `/readyz` make no span and no `INFO` line.
 - Without `OTEL_EXPORTER_OTLP_ENDPOINT`, no exporter starts. The service writes one `WARN` line.
@@ -71,6 +73,7 @@ updated: 2026-10-21
 - `tests/test_platform.py` — `readyz - any state - body matches health schema`
 - `tests/test_platform.py` — `log line - request completed - required fields, no forbidden keys`
 - `tests/test_platform.py` — `log line - path with id - route template, not raw path`
+- `tests/test_platform.py` — `log line - unhandled error - 500 with error field and request id`
 - `tests/test_platform.py` — `health endpoints - called - no INFO lines and no spans`
 - `tests/test_platform.py` — `request - traced - one trace_id in span, stdout and OTel log`
 - `tests/test_platform.py` — `otel setup - endpoint not set - no exporter, one warning`
@@ -81,3 +84,4 @@ updated: 2026-10-21
 | Date | Change |
 |---|---|
 | 2026-10-21 | New. `/healthz` and `/readyz` replace `/health`. JSON logs and OpenTelemetry (#23). |
+| 2026-10-29 | A request that ends in an unhandled error gets its log line and an `X-Request-ID` (#27). |
