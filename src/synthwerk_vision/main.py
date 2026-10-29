@@ -130,7 +130,11 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        app.state.storage = storage or LocalImageStorage(settings.upload_dir)
+        app.state.storage = storage or LocalImageStorage(
+            settings.upload_dir,
+            max_bytes=settings.upload_quota_bytes,
+            max_files=settings.upload_quota_files,
+        )
         app.state.service = build_service(settings, classifier)
         app.state.runtime_labels = runtime_labels(settings)
         app.state.overlay_signature = signature(app.state.runtime_labels.overlay)

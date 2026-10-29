@@ -27,7 +27,7 @@ from synthwerk_vision.schemas import (
     TopicOut,
 )
 from synthwerk_vision.service import Classification, ClassificationService, ScoredLabel, ScoredTopic
-from synthwerk_vision.storage import ImageStorage
+from synthwerk_vision.storage import ImageStorage, StorageFullError
 
 router = APIRouter()
 
@@ -82,14 +82,23 @@ async def validated_image(
     "/v1/images",
     status_code=status.HTTP_201_CREATED,
     tags=["images"],
-    responses=_IMAGE_ERRORS,
+    responses={
+        **_IMAGE_ERRORS,
+        507: {"model": ErrorOut, "description": "Upload storage quota reached"},
+    },
 )
 async def upload_image(
     image: Annotated[ValidatedImage, Depends(validated_image)],
     storage: Annotated[ImageStorage, Depends(get_storage)],
 ) -> ImageOut:
-    """Store an image under a server-generated id."""
-    image_id = await run_in_threadpool(storage.save, image.data, image.extension)
+    """Store an image under a server-generated id.
+
+    The upload folder has a byte and a file quota. When it is full, the answer is 507.
+    """
+    try:
+        image_id = await run_in_threadpool(storage.save, image.data, image.extension)
+    except StorageFullError as exc:
+        raise HTTPException(status.HTTP_507_INSUFFICIENT_STORAGE, str(exc)) from exc
     return ImageOut(
         id=image_id,
         content_type=f"image/{image.format.lower()}",

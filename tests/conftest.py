@@ -77,7 +77,12 @@ def settings(tmp_path: Path, taxonomy_file: Path) -> Settings:
 
 
 def _client(settings: Settings, **kwargs: object) -> Iterator[TestClient]:
-    app = create_app(settings, storage=LocalImageStorage(settings.upload_dir), **kwargs)  # type: ignore[arg-type]
+    storage = LocalImageStorage(
+        settings.upload_dir,
+        max_bytes=settings.upload_quota_bytes,
+        max_files=settings.upload_quota_files,
+    )
+    app = create_app(settings, storage=storage, **kwargs)  # type: ignore[arg-type]
     app.dependency_overrides[get_settings] = lambda: settings
     with TestClient(app) as client:
         yield client

@@ -85,3 +85,4 @@ updated: 2026-10-29
 |---|---|
 | 2026-10-21 | New. `/healthz` and `/readyz` replace `/health`. JSON logs and OpenTelemetry (#23). |
 | 2026-10-29 | A request that ends in an unhandled error gets its log line and an `X-Request-ID` (#27). |
+| 2026-10-29 | `main.py` gives the upload storage its quota. Health and telemetry do not change (#19). |

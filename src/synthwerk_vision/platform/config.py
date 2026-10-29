@@ -33,6 +33,16 @@ class Settings(BaseSettings):
         description="Browser origins allowed to call the API. Never use '*' in production.",
     )
     upload_dir: Path = Path("uploads")
+    upload_quota_bytes: int = Field(
+        default=1024 * 1024 * 1024,
+        gt=0,
+        description="Total bytes POST /v1/images may keep in upload_dir; more answers 507.",
+    )
+    upload_quota_files: int = Field(
+        default=10_000,
+        gt=0,
+        description="Total files POST /v1/images may keep in upload_dir; more answers 507.",
+    )
     data_dir: Path = Field(
         default=Path("data"), description="Runtime labels (labels.yaml) and feedback.sqlite3"
     )
