@@ -86,7 +86,9 @@ class FeedbackStore:
                 )
             entry = Feedback(int(cursor.lastrowid or 0), dhash, label_id)
             self._entries = (*self._entries, entry)
-            self._signature = signature(self._path)  # our own write needs no reload
+            # Force one reload on the next refresh(). A signature read here would also cover
+            # a row that another worker wrote after our commit and hide it until the next write.
+            self._signature = None
         return entry
 
     def recall(self, dhash: str, valid_label_ids: set[str]) -> Recall | None:

@@ -1,4 +1,5 @@
 import io
+import sqlite3
 from pathlib import Path
 
 import numpy as np
@@ -146,3 +147,42 @@ def test_feedback_refresh_loads_a_row_written_during_the_reload(
     worker_a.refresh()
 
     assert len(worker_a) == 2, "the next refresh() must load the row written during the reload"
+
+
+def test_feedback_refresh_loads_a_row_written_right_after_add(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from synthwerk_vision.feedback import FeedbackStore
+
+    path = tmp_path / "feedback.sqlite3"
+    worker_a, worker_b = FeedbackStore(path), FeedbackStore(path)
+    connect = worker_a._connect
+
+    class WriteAfterCommit:
+        """Worker B writes right after worker A's commit, before A's add() returns."""
+
+        def __init__(self) -> None:
+            self._db = connect()
+
+        def __enter__(self) -> "WriteAfterCommit":
+            self._db.__enter__()
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            self._db.__exit__(*exc)  # type: ignore[arg-type]
+            worker_b.add("sha-2", "f" * 16, "label-2")
+
+        def execute(self, sql: str, params: tuple[str, ...]) -> sqlite3.Cursor:
+            return self._db.execute(sql, params)
+
+        def close(self) -> None:
+            self._db.close()
+
+    monkeypatch.setattr(worker_a, "_connect", WriteAfterCommit)
+    worker_a.add("sha-1", "0" * 16, "label-1")
+    monkeypatch.setattr(worker_a, "_connect", connect)
+    assert len(worker_a) == 1, "add() only appends its own row"
+
+    worker_a.refresh()
+
+    assert len(worker_a) == 2, "the next refresh() must load the row written right after add()"
