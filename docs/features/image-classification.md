@@ -32,7 +32,7 @@ updated: 2026-10-29
 
 ## How to use
 
-1. Send the image as `multipart/form-data` in the field `image` to `POST /v1/classifications`.
+1. Send the image as `multipart/form-data` in the field `image` to `POST /v1/classifications`, with a widget token. See [Widget token](widget-token-auth.md).
 2. Read `primary` for the best label and `topic` for the best root topic.
 3. Read `uncertain`. When it is `true`, show the result as a guess.
 4. Send `X-Request-ID` to connect the response to your own logs.
@@ -60,11 +60,13 @@ updated: 2026-10-29
 
 | Status | Problem type | Cause |
 |---|---|---|
+| 401 | None (FastAPI `detail`) | No valid widget token. See [Widget token](widget-token-auth.md). |
+| 403 | None (FastAPI `detail`) | `Origin` is not the origin of the widget token. |
 | 413 | None (FastAPI `detail`) | The image is larger than the upload limit or the pixel limit. |
 | 415 | None (FastAPI `detail`) | The bytes are not a JPEG, PNG or WebP image. |
 | 422 | None (FastAPI `detail`) | The request has no `image` field, or the file is empty. |
 | 500 | None (text `Internal Server Error`) | An unexpected error. Give the `X-Request-ID` to the operator. |
-| 503 | None (FastAPI `detail`) | The model is not loaded. |
+| 503 | None (FastAPI `detail`) | The model is not loaded, or the token keys cannot be loaded. |
 
 ## Tests
 
@@ -84,3 +86,4 @@ updated: 2026-10-29
 | 2026-10-21 | `GET /health` is removed. `/readyz` reports the model state. The settings module moved to `platform/config.py` (#23). |
 | 2026-10-29 | A 500 response has the `X-Request-ID` header (#27). |
 | 2026-10-29 | New settings `UPLOAD_QUOTA_BYTES` and `UPLOAD_QUOTA_FILES` for `POST /v1/images`. Classification does not change (#19). |
+| 2026-10-29 | The route needs a widget token (#76). The service does not start without the token settings. |
