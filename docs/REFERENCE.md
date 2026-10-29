@@ -346,6 +346,10 @@ tests/                           unit tests with fakes, real-model tests (skip w
   - `model` (local job): fetches the weights, runs all tests with the real models, and runs the eval gate.
   - `e2e` runs only on demand (`workflow_dispatch` with `e2e: true`) and in `promote.yml`.
   - `conclusion` passes only when all jobs pass. It is the required check.
+- [`feature-doc.yml`](.github/workflows/feature-doc.yml) calls the blueprint feature-doc check
+  (`feature-doc.yml@v1`) on pull requests. A PR that changes `src/**` fails when it does not also
+  change the `docs/features/<slug>.md` whose `paths:` cover the file.
+  - Opt-out: label `no-feature-doc` and a line `no-feature-doc: <reason>` in the PR body.
 - Dependabot watches Python, Actions and Docker dependencies.
 - Exceptions to the fleet standard are in [`fleet.yml`](fleet.yml).
 - Workflow runs: [ci](https://github.com/VelimirMueller/synthwerk-vision/actions/workflows/ci.yml) · [deploy](https://github.com/VelimirMueller/synthwerk-vision/actions/workflows/deploy.yml) · [promote](https://github.com/VelimirMueller/synthwerk-vision/actions/workflows/promote.yml).

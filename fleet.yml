@@ -4,8 +4,8 @@ visibility: public
 
 exceptions:
   - rule: WF-FILE-02
-    value: [redeploy.yml]
-    reason: fleet-workflows has no rollback by digest; redeploy.yml deploys an older digest with the blueprint deploy and the existing dev secrets.
+    value: [redeploy.yml, feature-doc.yml]
+    reason: fleet-workflows has no rollback by digest and no feature-doc stage. redeploy.yml deploys an older digest with the blueprint deploy and the existing dev secrets; feature-doc.yml runs the blueprint check that keeps docs/features in step with src (D-16).
   - rule: WF-NAME-02
     value:
       ci.yml: [model]
