@@ -8,7 +8,7 @@ paths: ["src/synthwerk_vision/feedback.py"]
 api: ["POST /v1/feedback"]
 events: []
 mcp: []
-updated: 2026-10-21
+updated: 2026-10-29
 ---
 
 # Picture corrections
@@ -25,6 +25,8 @@ updated: 2026-10-21
 - A resized or re-encoded copy of the picture matches the same correction.
 - The response keeps the model output and adds `correction` next to it.
 - The service ignores a correction when its label was deleted.
+- Each worker process reloads the corrections when `feedback.sqlite3` changes on disk.
+- After its own write, a worker reloads once more. It then also sees a row from another worker.
 
 ## How to use
 
@@ -60,9 +62,12 @@ updated: 2026-10-21
 - `tests/test_admin.py` — `feedback - same picture - corrected, other pictures not`
 - `tests/test_admin.py` — `feedback - unknown label - rejected`
 - `tests/test_admin.py` — `correction - label deleted - ignored`
+- `tests/test_units.py` — `feedback - row written during a reload - loaded on the next refresh`
+- `tests/test_units.py` — `feedback - row written right after add - loaded on the next refresh`
 
 ## Changes
 
 | Date | Change |
 |---|---|
 | 2026-10-09 | Rename to `synthwerk_vision`. The settings use the prefix `SYNTHWERK_VISION_`. |
+| 2026-10-29 | `add()` forces one reload, so a row from another worker is not hidden (#26). |
