@@ -4,10 +4,12 @@ middleware on POST /v1/classifications and POST /v1/images, and the identity cli
 import asyncio
 import logging
 import threading
+import time
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr, ValidationError
@@ -208,6 +210,12 @@ def test_policy_static_origin_allowed_without_lookup() -> None:
     assert identity.calls == []
 
 
+def test_policy_non_canonical_static_entry_still_matches() -> None:
+    policy = OriginPolicy(["HTTPS://Shop.Example:443", "not an origin"])
+
+    assert asyncio.run(policy.allowed(SHOP))
+
+
 def test_policy_without_lookup_static_list_only() -> None:
     assert not asyncio.run(OriginPolicy([FIRST_PARTY]).allowed(SHOP))
 
@@ -289,6 +297,48 @@ def test_policy_cancelled_caller_does_not_cancel_the_shared_lookup() -> None:
         return await policy.allowed(SHOP)
 
     assert asyncio.run(run())
+    assert identity.calls == [SHOP]
+
+
+def test_policy_flood_of_new_origins_at_most_max_inflight_lookups() -> None:
+    identity = FakeIdentity(listed=set(), delay=0.05)
+    active = peak = 0
+    plain = identity.__call__
+
+    async def counting(origin: str) -> bool:
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        try:
+            return await plain(origin)
+        finally:
+            active -= 1
+
+    policy = OriginPolicy([], counting, max_inflight=8)
+
+    async def run() -> list[bool]:
+        return list(
+            await asyncio.gather(*(policy.allowed(f"https://r{i}.example") for i in range(100)))
+        )
+
+    assert asyncio.run(run()) == [False] * 100
+    assert peak == 8
+    assert len(identity.calls) == 8
+    assert len(policy) == 8  # only the answered lookups are cached
+
+
+def test_policy_full_denies_new_origin_but_joins_running_lookup() -> None:
+    identity = FakeIdentity(delay=0.05)
+    policy = OriginPolicy([], identity, max_inflight=1)
+
+    async def run() -> list[bool]:
+        return list(
+            await asyncio.gather(
+                policy.allowed(SHOP), policy.allowed(SHOP), policy.allowed("https://x.example")
+            )
+        )
+
+    assert asyncio.run(run()) == [True, True, False]
     assert identity.calls == [SHOP]
 
 
@@ -498,10 +548,12 @@ def test_admin_routes_no_cors_when_enabled(settings: Settings, identity: FakeIde
 
 class _Identity(BaseHTTPRequestHandler):
     status = 204
+    delay = 0.0
     seen: list[tuple[str, str | None]] = []  # noqa: RUF012 (one test at a time)
 
     def do_GET(self) -> None:
         type(self).seen.append((self.path, self.headers.get("Authorization")))
+        time.sleep(self.delay)
         self.send_response(self.status)
         if self.status in (301, 302):
             self.send_header("Location", "/elsewhere")
@@ -515,6 +567,7 @@ class _Identity(BaseHTTPRequestHandler):
 @pytest.fixture
 def identity_server() -> Iterator[str]:
     _Identity.status = 204
+    _Identity.delay = 0.0
     _Identity.seen = []
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Identity)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -546,6 +599,48 @@ def test_identity_other_status_raises(identity_server: str, status: int) -> None
     with pytest.raises(OriginLookupError, match=f"status {status}"):
         asyncio.run(IdentityOrigins(identity_server)(SHOP))
     assert len(_Identity.seen) == 1  # a redirect is not followed
+
+
+def test_identity_slow_answer_times_out(identity_server: str) -> None:
+    _Identity.delay = 1.0
+    started = time.perf_counter()
+
+    with pytest.raises(OriginLookupError, match="no answer"):
+        asyncio.run(IdentityOrigins(identity_server, timeout_s=0.1)(SHOP))
+    assert time.perf_counter() - started < 0.8
+
+
+def test_flood_of_random_origin_preflights_keeps_the_service_answering(
+    settings: Settings,
+) -> None:
+    """100 parallel preflights from new origins against a slow identity: at most 8 lookups,
+    the rest denied at once, and /healthz stays fast meanwhile."""
+    identity = FakeIdentity(listed=set(), delay=0.5)
+    app = create_app(settings, storage=_storage(settings), origin_lookup=identity)
+
+    async def run() -> tuple[list[int], float]:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://vision") as client:
+            flood = [
+                asyncio.create_task(
+                    client.options(
+                        "/v1/classifications", headers=preflight(f"https://r{i}.example")
+                    )
+                )
+                for i in range(100)
+            ]
+            await asyncio.sleep(0.05)
+            started = time.perf_counter()
+            health = await client.get("/healthz")
+            health_s = time.perf_counter() - started
+            assert health.status_code == 200
+            return [r.status_code for r in await asyncio.gather(*flood)], health_s
+
+    statuses, health_s = asyncio.run(run())
+
+    assert statuses == [403] * 100
+    assert len(identity.calls) == 8
+    assert health_s < 0.2
 
 
 def test_identity_unreachable_raises() -> None:

@@ -173,6 +173,7 @@ def create_app(
     verifier = build_verifier(settings)  # before telemetry: a config error starts nothing
     storage = storage or build_storage(settings)
     telemetry = telemetry or setup_telemetry(resource)
+    lookup = _lookup(settings, origin_lookup)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -191,6 +192,8 @@ def create_app(
         try:
             yield
         finally:
+            if isinstance(lookup, IdentityOrigins):
+                await lookup.aclose()
             telemetry.shutdown()
 
     app = FastAPI(title="Synthwerk Vision API", version=__version__, lifespan=lifespan)
@@ -204,7 +207,7 @@ def create_app(
     # Inside request_context: a preflight gets a request id and a log line too.
     app.add_middleware(
         WidgetCorsMiddleware,
-        policy=OriginPolicy(settings.cors_origins, _lookup(settings, origin_lookup)),
+        policy=OriginPolicy(settings.cors_origins, lookup),
     )
 
     @app.middleware("http")

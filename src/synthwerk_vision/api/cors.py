@@ -17,12 +17,10 @@ are server-to-server.
 import asyncio
 import logging
 import time
-import urllib.error
-import urllib.request
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Iterable, Mapping
-from urllib.parse import quote
 
+import httpx
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.responses import Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -34,6 +32,9 @@ logger = logging.getLogger("synthwerk_vision")
 DEFAULT_TTL_S = 60.0
 DEFAULT_MAX_ENTRIES = 4096
 DEFAULT_LOOKUP_TIMEOUT_S = 2.0
+# Identity lookups in flight at one time (one per origin). Full: a new origin is denied at
+# once, without a lookup and not cached, so a flood of random origins costs identity nothing.
+DEFAULT_MAX_INFLIGHT = 8
 MAX_AGE = "600"  # Access-Control-Max-Age of an allowed preflight, in seconds
 ALLOW_HEADERS = "Authorization, Content-Type"  # the request headers the widget sends
 # Vision sends no Retry-After. The widget may read the request id of an error answer.
@@ -55,49 +56,48 @@ class OriginLookupError(Exception):
     """Identity gave no usable answer."""
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *args: object, **kwargs: object) -> None:
-        return None  # a 3xx then raises HTTPError: not a yes or no
-
-
 class IdentityOrigins:
     """`GET <identity>/internal/v1/widget-origins?origin=<origin>`: 204 yes, 404 no, anything
-    else raises OriginLookupError. The call sends no token. urllib in a worker thread, like
-    the key set fetch (`platform/auth.py`), so the event loop never blocks."""
+    else raises OriginLookupError. The call sends no token.
+
+    One shared `httpx.AsyncClient`: a timeout or a cancel really ends the request, so no
+    worker thread stays busy (a flood of new origins cannot fill a thread pool). No proxy
+    from the environment and no redirects: identity is an internal service. A path in the
+    base URL is kept as a prefix.
+    """
 
     def __init__(self, base_url: str, timeout_s: float = DEFAULT_LOOKUP_TIMEOUT_S) -> None:
         self._base = base_url.rstrip("/")
-        self._timeout_s = timeout_s
-        # No proxy from the environment and no redirects: identity is an internal service.
-        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+        self._client = httpx.AsyncClient(
+            timeout=timeout_s,
+            follow_redirects=False,
+            trust_env=False,
+            limits=httpx.Limits(max_connections=DEFAULT_MAX_INFLIGHT),
+        )
 
     async def __call__(self, origin: str) -> bool:
-        return await asyncio.to_thread(self._get, origin)
-
-    def _get(self, origin: str) -> bool:
-        url = f"{self._base}{WIDGET_ORIGINS_PATH}?origin={quote(origin, safe='')}"
-        request = urllib.request.Request(url, method="GET")  # noqa: S310 (http/https only)
         try:
-            with self._opener.open(request, timeout=self._timeout_s) as response:
-                response.read(4096)
-                status = response.status
-        except urllib.error.HTTPError as exc:
-            status = exc.code
-            exc.close()
-        except (OSError, ValueError) as exc:  # URLError, timeout, refused, bad URL
+            response = await self._client.get(
+                f"{self._base}{WIDGET_ORIGINS_PATH}", params={"origin": origin}
+            )
+        except httpx.HTTPError as exc:  # timeout, refused, protocol error
             raise OriginLookupError("no answer") from exc
-        if status == 204:
+        if response.status_code == 204:
             return True
-        if status == 404:
+        if response.status_code == 404:
             return False
-        raise OriginLookupError(f"status {status}")
+        raise OriginLookupError(f"status {response.status_code}")
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
 
 
 class OriginPolicy:
     """Decides which origins may read the answer of a widget route.
 
     Identity answers (yes and no) are cached per canonical origin for `ttl_s`, at most
-    `max_entries`. One identity call per origin at a time. A failed or slow call denies and
+    `max_entries`. One identity call per origin at a time, at most `max_inflight` calls in
+    all; past that a new origin is denied without a call. A failed or slow call denies and
     is not cached.
     """
 
@@ -109,9 +109,13 @@ class OriginPolicy:
         ttl_s: float = DEFAULT_TTL_S,
         max_entries: int = DEFAULT_MAX_ENTRIES,
         lookup_timeout_s: float = DEFAULT_LOOKUP_TIMEOUT_S,
+        max_inflight: int = DEFAULT_MAX_INFLIGHT,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._static = frozenset(static)
+        # Canonical form, so a non-canonical spelling still matches. Settings already refuse
+        # an invalid item; here it is only skipped.
+        self._static = frozenset(c for o in static if (c := _canonical_or_none(o)) is not None)
+        self._max_inflight = max_inflight
         self._lookup = lookup
         self._ttl_s = ttl_s
         self._max_entries = max_entries
@@ -139,6 +143,8 @@ class OriginPolicy:
             return cached
         task = self._inflight.get(origin)
         if task is None:
+            if len(self._inflight) >= self._max_inflight:
+                return False  # deny now: no lookup, not cached
             task = asyncio.create_task(self._ask(origin))
             self._inflight[origin] = task
             task.add_done_callback(self._done(origin))
@@ -189,6 +195,13 @@ class OriginPolicy:
             while len(self._cache) >= self._max_entries:
                 self._cache.popitem(last=False)
         self._cache[origin] = (allowed, now + self._ttl_s)
+
+
+def _canonical_or_none(value: str) -> str | None:
+    try:
+        return canonical_origin(value)
+    except OriginError:
+        return None
 
 
 def _route_path(scope: Scope) -> str:
