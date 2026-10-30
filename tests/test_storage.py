@@ -173,6 +173,9 @@ def test_local_counters_scanned_again_after_refresh_interval(tmp_path: Path) -> 
     monotonic.now += LocalImageStorage.REFRESH_S + 1
     with pytest.raises(StorageFullError):
         storage.save(b"a", org_id="org-1", **PNG)  # rescanned: 10 of 10 bytes
+    monotonic.now += 10 * LocalImageStorage.REFRESH_S + 1
+    storage.save(b"a", org_id="org-2", **PNG)  # the idle counter of org-1 is dropped
+    assert "org-1" not in storage._org_usage
 
 
 def test_local_quota_file_deleted_during_scan_skipped(

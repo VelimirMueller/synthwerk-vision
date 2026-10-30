@@ -158,6 +158,9 @@ class _QuotaStorage:
             files, used = self._scan(f"{org_id}/", self._max_files, self._max_bytes)
             usage = _Usage(files, used, self._monotonic())
             with self._lock:
+                # Drop counters of orgs with no upload for a long time; they are scanned again.
+                for idle in [o for o, u in self._org_usage.items() if self._idle(u)]:
+                    del self._org_usage[idle]
                 self._org_usage[org_id] = usage
         return usage
 
@@ -181,6 +184,9 @@ class _QuotaStorage:
 
     def _stale(self, usage: _Usage) -> bool:
         return self._monotonic() - usage.measured_at > self.REFRESH_S
+
+    def _idle(self, usage: _Usage) -> bool:
+        return self._monotonic() - usage.measured_at > 10 * self.REFRESH_S
 
     def _scan(
         self, prefix: str | None, stop_files: int | None, stop_bytes: int
