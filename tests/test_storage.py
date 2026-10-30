@@ -181,12 +181,14 @@ def test_local_counters_scanned_again_after_refresh_interval(tmp_path: Path) -> 
 
 
 def test_local_near_limit_stale_cache_scanned_again_and_refused(tmp_path: Path) -> None:
-    storage = local(tmp_path, max_bytes=10, margin_bytes=4)
+    monotonic = FakeMonotonic()
+    storage = local(tmp_path, max_bytes=10, margin_bytes=4, monotonic=monotonic)
     storage.save(b"aa", org_id="org-1", **PNG)
     other = tmp_path / "org-1" / "2026" / "09"
     other.mkdir(parents=True)
     (other / "from-another-instance.png").write_bytes(b"x" * 6)
     assert storage.save(b"aa", org_id="org-1", **PNG)  # far from the limit: cache, no scan
+    monotonic.now += LocalImageStorage.MIN_RESCAN_S
 
     with pytest.raises(StorageFullError):
         storage.save(b"aaa", org_id="org-1", **PNG)  # cache says 4 + 3; the scan says 10 + 3
@@ -421,13 +423,63 @@ def test_s3_total_cap_reached_save_of_any_org_refused(
 def test_s3_total_near_limit_stale_cache_scanned_again_and_refused(
     s3_settings: Settings, s3: Any, bucket: str
 ) -> None:
-    storage = s3_storage(s3_settings, max_bytes=100, max_total_bytes=20, margin_bytes=16)
+    monotonic = FakeMonotonic()
+    storage = s3_storage(
+        s3_settings, max_bytes=100, max_total_bytes=20, margin_bytes=16, monotonic=monotonic
+    )
     storage.save(b"aa", org_id="org-1", **PNG)
     s3.put_object(Bucket=bucket, Key="org-9/2026/10/other-instance.png", Body=b"x" * 15)
+    monotonic.now += S3ImageStorage.MIN_RESCAN_S
 
     with pytest.raises(StorageFullError):
         storage.save(b"aaaa", org_id="org-2", **PNG)  # cache says 2 + 4; the listing 17 + 4
     assert len(keys(s3, bucket)) == 2
+
+
+def test_s3_fifty_parallel_near_limit_saves_cause_at_most_one_scan_per_counter(
+    s3_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monotonic = FakeMonotonic()
+    storage = s3_storage(
+        s3_settings,
+        max_bytes=45,
+        max_files=100,
+        max_total_bytes=1000,
+        margin_bytes=1000,  # every save is near both limits
+        monotonic=monotonic,
+    )
+    storage.save(b"a", org_id="org-1", **PNG)  # first scans of the org and the total
+    monotonic.now += S3ImageStorage.MIN_RESCAN_S  # near the limit: one rescan is allowed
+    scans: list[str | None] = []
+    real_scan = S3ImageStorage._scan
+
+    def counting_scan(
+        self: S3ImageStorage, prefix: str | None, stop_files: int | None, stop_bytes: int
+    ) -> tuple[int, int]:
+        scans.append(prefix)
+        return real_scan(self, prefix, stop_files, stop_bytes)
+
+    monkeypatch.setattr(S3ImageStorage, "_scan", counting_scan)
+    results: list[str] = []
+
+    def save() -> None:
+        try:
+            storage.save(b"a", org_id="org-1", **PNG)
+            results.append("stored")
+        except StorageFullError:
+            results.append("full")
+
+    threads = [threading.Thread(target=save) for _ in range(50)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+
+    assert sorted(map(str, scans)) == [
+        "None",
+        "org-1/",
+    ]
+    assert (results.count("stored"), results.count("full")) == (44, 6)  # 1 + 44 = 45 bytes
 
 
 def test_s3_slow_put_of_one_org_does_not_block_another_org(

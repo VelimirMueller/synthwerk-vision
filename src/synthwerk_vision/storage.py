@@ -98,6 +98,8 @@ class _QuotaStorage:
       plus the upload plus a margin (`margin_bytes`, `margin_files`: one upload per other
       writer) passes the limit. So far from a limit a save costs no listing, and near a limit
       it sees what other workers and instances wrote.
+    - Near-limit scans are single-flight and at most one per counter per `MIN_RESCAN_S`, so a
+      burst of requests near a limit cannot turn into a burst of listings.
     - Residual race: N writers can each pass the check at the same moment, so a quota can be
       exceeded by at most N - 1 uploads (as in #36).
     - Each org has its own lock, held across the scan and the write of that org only. The
@@ -108,6 +110,9 @@ class _QuotaStorage:
     """
 
     REFRESH_S = 10.0
+    # Near a limit, at most one scan per counter in this time. A younger scan is reused, and
+    # when it already shows the limit reached, the save is refused without a new scan.
+    MIN_RESCAN_S = 1.0
 
     def __init__(
         self,
@@ -170,7 +175,11 @@ class _QuotaStorage:
         """The org's counter; called with the org lock held, so one scan per org at a time."""
         with self._lock:
             usage = self._org_usage.get(org_id)
-        if usage is None or self._stale(usage) or self._org_near_limit(usage, size):
+        if (
+            usage is None
+            or self._stale(usage)
+            or (self._org_near_limit(usage, size) and self._may_rescan(usage))
+        ):
             files, used = self._scan(f"{org_id}/", self._max_files, self._max_bytes)
             usage = _Usage(files, used, self._monotonic())
             with self._lock:
@@ -186,7 +195,10 @@ class _QuotaStorage:
             needs_scan = (
                 seen is None
                 or self._stale(seen)
-                or seen.bytes + self._in_flight + size + self._margin_bytes > self._max_total_bytes
+                or (
+                    seen.bytes + self._in_flight + size + self._margin_bytes > self._max_total_bytes
+                    and self._may_rescan(seen)
+                )
             )
         if needs_scan:
             with self._total_scan_lock:
@@ -202,6 +214,9 @@ class _QuotaStorage:
             if total.bytes + self._in_flight + size > self._max_total_bytes:
                 raise StorageFullError("upload storage quota reached")
             self._in_flight += size
+
+    def _may_rescan(self, usage: _Usage) -> bool:
+        return self._monotonic() - usage.measured_at >= self.MIN_RESCAN_S
 
     def _stale(self, usage: _Usage) -> bool:
         return self._monotonic() - usage.measured_at > self.REFRESH_S

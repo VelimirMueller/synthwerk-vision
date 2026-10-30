@@ -32,6 +32,7 @@ updated: 2026-10-30
   - The service scans again when a counter is older than 10 s.
   - Near a limit, the service scans again before each write: when the counter plus the upload plus a margin passes the limit. The margin is `MAX_UPLOAD_BYTES` × `UPLOAD_WRITERS` bytes and `UPLOAD_WRITERS` files.
   - Far from a limit, a save costs no scan.
+  - Near a limit, each counter is scanned at most once per second, by one request at a time. Other requests reuse that scan. When a scan younger than 1 s already shows the limit reached, the answer is 507 without a new scan.
   - With N writers, a quota can go over by at most N − 1 uploads: each writer can pass the check at the same moment (the same rule as #19).
 - Bytes of writes in flight have their own counter. A scan during a write does not lose or double-count them.
 - When the new upload goes over the org quota or the total cap, the service stores nothing and answers 507.
@@ -76,7 +77,7 @@ Switch to the S3 backend:
 | Byte quota per org | 1 GiB (`SYNTHWERK_VISION_UPLOAD_QUOTA_BYTES`) |
 | File quota per org | 10 000 (`SYNTHWERK_VISION_UPLOAD_QUOTA_FILES`) |
 | Byte cap for all orgs | 5 GiB (`SYNTHWERK_VISION_UPLOAD_QUOTA_TOTAL_BYTES`). Keep it below the bucket or disk size (Supabase free plan: 1 GB) |
-| Counter refresh | 10 s, and before each write near a limit |
+| Counter refresh | 10 s, and near a limit at most once per second |
 | Writers for the margin | 2 (`SYNTHWERK_VISION_UPLOAD_WRITERS`): worker processes × instances on the same store |
 | S3 timeouts | Connect 2 s, request 10 s, 2 retries |
 | Read back by id | Not available |
@@ -119,6 +120,7 @@ Switch to the S3 backend:
 - `tests/test_storage.py` — `local - near the limit with a stale cache - scanned again and refused`
 - `tests/test_storage.py` — `local - failed write during a rescan - total stays correct`
 - `tests/test_storage.py` — `s3 - total near the limit with a stale cache - scanned again and refused`
+- `tests/test_storage.py` — `s3 - 50 parallel saves near the limit - one scan per counter`
 - `tests/test_storage.py` — `s3 - total cap reached by all orgs - next save refused`
 - `tests/test_storage.py` — `s3 - slow put of one org - other org not blocked`
 - `tests/test_storage.py` — `s3 - quota reached on the first page - listing stops`
