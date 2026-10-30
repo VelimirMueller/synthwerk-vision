@@ -22,6 +22,7 @@ dependencies = [
     "structlog==26.1.0",
     "opentelemetry-instrumentation-logging==0.66b1",
     "pyjwt[crypto]>=2.10",
+    "obstore>=0.12.1,<0.13",
 ]
 
 [dependency-groups]
@@ -38,6 +39,11 @@ dev = [
     "types-pyyaml>=6.0.12.20260906",
     "jsonschema>=4.26",
     "types-jsonschema>=4.26",
+    # S3 emulator for the s3 storage tests: moto ThreadedMotoServer in the test process
+    # (flask + flask-cors run it). No Docker, no real Supabase.
+    "moto[s3]>=5.1",
+    "flask>=3.1",
+    "flask-cors>=6.0",
 ]
 
 [build-system]
@@ -66,6 +72,11 @@ files = ["src", "tests"]
 
 [[tool.mypy.overrides]]
 module = ["onnxruntime.*"]
+ignore_missing_imports = true
+
+# boto3 only seeds the moto bucket in tests; the service uses obstore (typed).
+[[tool.mypy.overrides]]
+module = ["boto3.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

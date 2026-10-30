@@ -32,16 +32,34 @@ class Settings(BaseSettings):
         default=["http://localhost:5173", "http://localhost:8080"],
         description="Browser origins allowed to call the API. Never use '*' in production.",
     )
+    storage_backend: Literal["local", "s3"] = Field(
+        default="local",
+        description="local: files in upload_dir (development). s3: an S3-compatible bucket.",
+    )
     upload_dir: Path = Path("uploads")
     upload_quota_bytes: int = Field(
         default=1024 * 1024 * 1024,
         gt=0,
-        description="Total bytes POST /v1/images may keep in upload_dir; more answers 507.",
+        description="Bytes POST /v1/images may keep per org; more answers 507.",
     )
     upload_quota_files: int = Field(
         default=10_000,
         gt=0,
-        description="Total files POST /v1/images may keep in upload_dir; more answers 507.",
+        description="Files POST /v1/images may keep per org; more answers 507.",
+    )
+    s3_endpoint: str | None = Field(
+        default=None,
+        description="S3 API URL, e.g. https://<project>.storage.supabase.co/storage/v1/s3.",
+    )
+    s3_region: str | None = Field(default=None, description="Region of the bucket.")
+    s3_bucket: str | None = Field(default=None, description="Private bucket for uploads.")
+    s3_access_key_id: SecretStr | None = None
+    s3_access_key_id_file: Path | None = Field(
+        default=None, description="File that holds the access key id (instead of the value)."
+    )
+    s3_secret_access_key: SecretStr | None = None
+    s3_secret_access_key_file: Path | None = Field(
+        default=None, description="File that holds the secret access key (instead of the value)."
     )
     data_dir: Path = Field(
         default=Path("data"), description="Runtime labels (labels.yaml) and feedback.sqlite3"

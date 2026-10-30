@@ -10,7 +10,8 @@ flowchart LR
   widgets[synthwerk-widgets<br/>vision widget] --> svc[synthwerk-vision]
   studio[synthwerk-studio] --> svc
   svc --> ort[ONNX Runtime<br/>SigLIP 2 / MobileNetV2]
-  svc --> disk[(local disk<br/>uploads, labels, corrections)]
+  svc --> disk[(local disk<br/>labels, corrections,<br/>uploads in dev)]
+  svc --> bucket[(Supabase Storage<br/>uploads, S3 API)]
 ```
 
 - Ecosystem map: [synthwerk](https://github.com/VelimirMueller/synthwerk).
@@ -23,8 +24,8 @@ flowchart LR
 | Method | Path                  | Purpose                                     | Success | Errors        |
 |--------|-----------------------|---------------------------------------------|---------|---------------|
 | GET    | `/healthz`            | Liveness: the process runs (no checks)      | 200     |               |
-| GET    | `/readyz`             | Readiness: `model` check (+ `data_dir` with admin on) | 200 | 503 |
-| POST   | `/v1/images`          | Store an image, return its generated id     | 201     | 401, 403, 413, 415, 422, 503 |
+| GET    | `/readyz`             | Readiness: `model` check (+ `data_dir` with admin on, + `storage` with the s3 backend) | 200 | 503 |
+| POST   | `/v1/images`          | Store an image for the token's org, return its generated id | 201 | 401, 403, 413, 415, 422, 503, 507 |
 | POST   | `/v1/classifications` | Classify an image (not stored)              | 200     | 401, 403, 413, 415, 422, 503 |
 | *admin* | `/v1/labels`, `/v1/feedback` | See [Runtime labels and corrections](#runtime-labels-and-corrections) | | 401, 404, 409 |
 | *admin* | `/v1/orgs/{org_id}/labels`, `/v1/orgs/{org_id}/feedback` | Label set and corrections of one org, see [Label sets per org](features/label-sets.md) | | 401, 404, 409, 422 |
@@ -36,6 +37,8 @@ flowchart LR
   - `model`: `down` until the model is loaded.
   - `data_dir`: only when `SYNTHWERK_VISION_ADMIN_TOKEN` is set. `degraded` when the data
     directory is not writable (classification still works, runtime labels and corrections fail).
+  - `storage`: only with `SYNTHWERK_VISION_STORAGE_BACKEND=s3`. `degraded` when the upload bucket
+    does not answer within 0.4 s, is missing or refuses the credentials (uploads fail with 503).
 - Both POST endpoints take `multipart/form-data` with one field, `image` (JPEG, PNG or WebP).
 - Both POST endpoints need `Authorization: Bearer <widget token>` from synthwerk-identity and the
   matching `Origin` header (#76). No valid token: 401. Other origin: 403. See
@@ -255,14 +258,20 @@ unavailable. The fix is then to rebuild the set: `scripts/build_eval_manifest.py
 - **Env vars with any other prefix are ignored.** This includes the prefixes of the old project name. Rename them in every `.env` and deployment.
 - A bare `SYNTHWERK_` prefix (without `VISION_`) is also ignored. Each Synthwerk service has its own prefix.
 - The service does not warn about old names. It uses the default value instead.
-- Names only. Secret values (`SYNTHWERK_VISION_ADMIN_TOKEN`) live in the environment, never in the repo.
+- Names only. Secret values (`SYNTHWERK_VISION_ADMIN_TOKEN`, the S3 keys) live in the environment or in a mounted file, never in the repo.
 
 | Variable                     | Default                                        |
 |------------------------------|------------------------------------------------|
 | `SYNTHWERK_VISION_CORS_ORIGINS`     | `["http://localhost:5173","http://localhost:8080"]` |
-| `SYNTHWERK_VISION_UPLOAD_DIR`       | `uploads`                                      |
-| `SYNTHWERK_VISION_UPLOAD_QUOTA_BYTES` | `1073741824` (1 GiB): bytes kept in the upload dir |
-| `SYNTHWERK_VISION_UPLOAD_QUOTA_FILES` | `10000`: files kept in the upload dir         |
+| `SYNTHWERK_VISION_STORAGE_BACKEND`  | `local` (files in the upload dir) or `s3` (S3-compatible bucket) |
+| `SYNTHWERK_VISION_UPLOAD_DIR`       | `uploads` (local backend)                      |
+| `SYNTHWERK_VISION_UPLOAD_QUOTA_BYTES` | `1073741824` (1 GiB): bytes kept per org     |
+| `SYNTHWERK_VISION_UPLOAD_QUOTA_FILES` | `10000`: files kept per org                  |
+| `SYNTHWERK_VISION_S3_ENDPOINT`      | unset; **required** with `s3`. Supabase: `https://<project>.storage.supabase.co/storage/v1/s3`. `https` outside `local` and `ci` |
+| `SYNTHWERK_VISION_S3_REGION`        | unset; **required** with `s3`, such as `eu-central-1` |
+| `SYNTHWERK_VISION_S3_BUCKET`        | unset; **required** with `s3`. Keep the bucket private |
+| `SYNTHWERK_VISION_S3_ACCESS_KEY_ID` / `…_FILE` | unset; **required** with `s3`: the value, or a file that holds it (not both) |
+| `SYNTHWERK_VISION_S3_SECRET_ACCESS_KEY` / `…_FILE` | unset; **required** with `s3`: the value, or a file that holds it (not both) |
 | `SYNTHWERK_VISION_DATA_DIR`         | `data` (runtime labels + corrections)          |
 | `SYNTHWERK_VISION_ADMIN_TOKEN`      | unset: admin endpoints disabled                |
 | `SYNTHWERK_VISION_OIDC_ISSUER`      | **required**: `iss` of the widget token (identity widget issuer) |
@@ -327,7 +336,7 @@ src/synthwerk_vision/
   api/routes.py   HTTP layer and dependency wiring
   api/admin.py    label sets and corrections, default and per org (admin token)
   images.py       bounded reads, image validation, dHash
-  storage.py      ImageStorage protocol + local disk implementation
+  storage.py      ImageStorage protocol, keys per org, local disk + S3 (obstore) backends
   classifier.py   Classifier protocol (image -> probability vector) + MobileNetV2
   siglip.py       SigLIP 2: image/text towers, tokenizer, label-embedding cache
   taxonomy.py     topic tree, label paths, roll-up of probabilities into topic scores
@@ -435,8 +444,10 @@ here with its source and license before it is used.
 
 ## Security
 
-- Uploaded files are named `<uuid4>.<ext>`. The extension comes from the decoded format,
-  and files open with `O_EXCL`, so an upload can never overwrite an existing file.
+- Uploads are stored under `<org>/<yyyy>/<mm>/<uuid4>.<ext>`. The org comes from the widget token,
+  the extension from the decoded format, never from the client. Local files open with `O_EXCL`,
+  so an upload can never overwrite an existing file. S3 objects get no ACL: they stay as private
+  as the bucket.
 - CORS allows only the configured origins, without credentials.
 - Endpoints that change server state (`/v1/labels`, `/v1/feedback`) need a bearer token
   (`SYNTHWERK_VISION_ADMIN_TOKEN`, compared in constant time) and are absent without one.
@@ -444,14 +455,14 @@ here with its source and license before it is used.
   at most 15 min). The service does not start without the token settings, unless
   `SYNTHWERK_VISION_AUTH_DISABLED=true` in `local` or `ci`. Rate limits still need a gateway.
 - `POST /v1/images` keeps at most `SYNTHWERK_VISION_UPLOAD_QUOTA_BYTES` and
-  `SYNTHWERK_VISION_UPLOAD_QUOTA_FILES` in the upload dir. When the quota is reached, it answers
+  `SYNTHWERK_VISION_UPLOAD_QUOTA_FILES` per org. When the quota is reached, it answers
   507 and stores nothing. Nothing deletes old uploads: free space by hand or raise the quota.
 - Report a vulnerability through a private GitHub security advisory on this repo.
 
 ## Roadmap
 
 - Few-shot labels from example images (needs calibrating image-image vs image-text scores).
-- An S3-compatible `ImageStorage`, plus a `GET /v1/images/{id}`.
+- A `GET /v1/images/{id}` and a retention rule for old uploads.
 - API keys and rate limiting.
 
 ## License

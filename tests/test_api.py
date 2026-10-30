@@ -8,6 +8,10 @@ from synthwerk_vision.platform.config import Settings, get_settings
 from tests.conftest import FakeClassifier, make_image, widget_headers
 
 
+def files_in(upload_dir: Path) -> list[Path]:
+    return sorted(p for p in upload_dir.rglob("*") if p.is_file())
+
+
 def test_readyz_reports_model_state(client: TestClient, client_without_model: TestClient) -> None:
     ready = client.get("/readyz")
     not_ready = client_without_model.get("/readyz")
@@ -25,7 +29,9 @@ def test_upload_stores_image_under_generated_id(client: TestClient, settings: Se
     body = response.json()
     assert body["content_type"] == "image/png"
     assert (body["width"], body["height"]) == (32, 24)
-    assert (settings.upload_dir / f"{body['id']}.png").is_file()
+    [path] = files_in(settings.upload_dir)
+    assert path.name == f"{body['id']}.png"
+    assert path.relative_to(settings.upload_dir).parts[0] == "org-1"  # the token's org
 
 
 def test_upload_quota_reached_next_upload_refused_507(settings: Settings) -> None:
@@ -42,7 +48,7 @@ def test_upload_quota_reached_next_upload_refused_507(settings: Settings) -> Non
     assert [r.status_code for r in stored] == [201, 201]
     assert refused.status_code == 507
     assert refused.json() == {"detail": "upload storage quota reached"}
-    assert len(list(settings.upload_dir.iterdir())) == 2
+    assert len(files_in(settings.upload_dir)) == 2
 
 
 @pytest.mark.parametrize(
@@ -55,7 +61,8 @@ def test_client_filename_never_reaches_the_filesystem(
 
     assert response.status_code == 201
     written = [p for p in tmp_path.rglob("*") if p.is_file() and p != taxonomy_file]
-    assert written == [settings.upload_dir / f"{response.json()['id']}.png"]
+    assert written == files_in(settings.upload_dir)
+    assert [p.name for p in written] == [f"{response.json()['id']}.png"]
 
 
 def test_extension_comes_from_decoded_format_not_from_client(
@@ -66,7 +73,7 @@ def test_extension_comes_from_decoded_format_not_from_client(
 
     assert response.status_code == 201
     assert response.json()["content_type"] == "image/jpeg"
-    assert (settings.upload_dir / f"{response.json()['id']}.jpg").is_file()
+    assert [p.name for p in files_in(settings.upload_dir)] == [f"{response.json()['id']}.jpg"]
 
 
 def test_non_image_is_rejected(client: TestClient, settings: Settings) -> None:

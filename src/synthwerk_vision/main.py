@@ -33,7 +33,7 @@ from synthwerk_vision.platform.otel import (
 from synthwerk_vision.runtime_labels import RuntimeLabels, signature
 from synthwerk_vision.service import ClassificationService
 from synthwerk_vision.siglip import SiglipClassifier
-from synthwerk_vision.storage import ImageStorage, LocalImageStorage
+from synthwerk_vision.storage import ImageStorage, S3ImageStorage, build_storage
 from synthwerk_vision.taxonomy import Taxonomy
 
 logger = logging.getLogger("synthwerk_vision")
@@ -123,6 +123,22 @@ def _data_dir_check(data_dir: Path) -> ReadinessCheck:
     return ReadinessCheck("data_dir", run)
 
 
+def _storage_check(storage: S3ImageStorage) -> ReadinessCheck:
+    """The upload bucket must exist and be listable. Not reachable or slow: uploads fail
+    with 503, classification still works, so the service is degraded, not down."""
+
+    async def run(_: Request) -> CheckResult:
+        try:
+            reachable = await asyncio.wait_for(storage.reachable(), 0.4)
+        except TimeoutError:
+            return CheckResult("degraded", "upload bucket timeout")
+        if reachable:
+            return CheckResult("ok")
+        return CheckResult("degraded", "upload bucket not reachable")
+
+    return ReadinessCheck("storage", run, timeout_s=0.45)
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -134,15 +150,12 @@ def create_app(
     resource = build_resource(settings)
     configure_logging(settings, log_fields(resource))
     verifier = build_verifier(settings)  # before telemetry: a config error starts nothing
+    storage = storage or build_storage(settings)
     telemetry = telemetry or setup_telemetry(resource)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        app.state.storage = storage or LocalImageStorage(
-            settings.upload_dir,
-            max_bytes=settings.upload_quota_bytes,
-            max_files=settings.upload_quota_files,
-        )
+        app.state.storage = storage
         app.state.label_sets = label_sets(settings)
         app.state.label_sets.migrate()  # before the default set is read
         app.state.service = build_service(settings, classifier)
@@ -165,6 +178,8 @@ def create_app(
     app.state.readiness_checks = [ReadinessCheck("model", _model_ready)]
     if settings.admin_token is not None:
         app.state.readiness_checks.append(_data_dir_check(settings.data_dir))
+    if isinstance(storage, S3ImageStorage):
+        app.state.readiness_checks.append(_storage_check(storage))
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
