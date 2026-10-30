@@ -121,6 +121,9 @@ class _QuotaStorage:
         self._org_usage: dict[str, _Usage] = {}
         self._total: _Usage | None = None
         self._lock = threading.Lock()  # guards the dicts and counters; never held across I/O
+        # Serialises the total scan (once per REFRESH_S), so two refreshes never race. It is
+        # never held across a write.
+        self._total_scan_lock = threading.Lock()
 
     def save(self, data: bytes, *, org_id: str, extension: str, content_type: str) -> str:
         image_id = uuid.uuid4().hex
@@ -140,7 +143,7 @@ class _QuotaStorage:
             except BaseException:
                 with self._lock:
                     assert self._total is not None  # noqa: S101 (set by _reserve_total)
-                    self._total.bytes -= size
+                    self._total.bytes = max(0, self._total.bytes - size)
                 raise
             with self._lock:
                 org.files += 1
@@ -160,13 +163,18 @@ class _QuotaStorage:
 
     def _reserve_total(self, size: int) -> None:
         with self._lock:
-            total = self._total
-        if total is None or self._stale(total):
-            # Scanned outside the lock: two orgs may scan at the same moment, the later wins.
-            _, used = self._scan(None, None, self._max_total_bytes)
-            with self._lock:
-                self._total = total = _Usage(0, used, self._monotonic())
+            needs_scan = self._total is None or self._stale(self._total)
+        if needs_scan:
+            with self._total_scan_lock:
+                with self._lock:
+                    needs_scan = self._total is None or self._stale(self._total)
+                if needs_scan:  # still stale: no other thread refreshed it meanwhile
+                    _, used = self._scan(None, None, self._max_total_bytes)
+                    with self._lock:
+                        self._total = _Usage(0, used, self._monotonic())
         with self._lock:
+            total = self._total
+            assert total is not None  # noqa: S101 (set above)
             if total.bytes + size > self._max_total_bytes:
                 raise StorageFullError("upload storage quota reached")
             total.bytes += size
@@ -222,6 +230,8 @@ class LocalImageStorage(_QuotaStorage):
                     continue
                 files += 1
                 used += stat.st_size
+                if (stop_files is not None and files >= stop_files) or used >= stop_bytes:
+                    return files, used  # the quota is reached; the rest cannot change it
         return files, used
 
     def _put(self, key: str, data: bytes, content_type: str) -> None:
