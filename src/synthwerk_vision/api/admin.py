@@ -77,6 +77,8 @@ _ERRORS: dict[int | str, dict[str, object]] = {
 }
 # Runs after a label change: puts the new service where the next request finds it.
 Publish = Callable[[ClassificationService], None]
+# Runs under the admin lock: the service of the set now, so a change builds on the last one.
+Current = Callable[[], ClassificationService | None]
 
 
 def _runtime_label_out(item: dict[str, object], taxonomy: Taxonomy) -> RuntimeLabelOut:
@@ -95,6 +97,20 @@ def _org_labels(request: Request, org_id: str) -> RuntimeLabels:
     return sets.org(org_id)  # the path pattern makes the id a safe file name
 
 
+def _current_default(request: Request) -> Current:
+    return lambda: request.app.state.service
+
+
+def _current_org(request: Request, org_id: str, labels: RuntimeLabels) -> Current:
+    def current() -> ClassificationService | None:
+        cache: OrgServices = request.app.state.org_services
+        own = cache.get(org_id, signature(labels.overlay)) if labels.own else None
+        default: ClassificationService | None = request.app.state.service
+        return own or default
+
+    return current
+
+
 def _publish_default(request: Request) -> Publish:
     def publish(service: ClassificationService) -> None:
         request.app.state.service = service
@@ -111,19 +127,23 @@ def _publish_org(request: Request, org_id: str, labels: RuntimeLabels) -> Publis
     return publish
 
 
+def _builder(current: Current) -> ClassificationService:
+    service = current()
+    if service is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "no model with runtime labels loaded")
+    if not service.supports_runtime_labels:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"{service.model_name} has a fixed label set")
+    return service
+
+
 async def _add(
-    request: Request,
-    body: LabelIn,
-    labels: RuntimeLabels,
-    builder: ClassificationService,
-    publish: Publish,
+    request: Request, body: LabelIn, labels: RuntimeLabels, current: Current, publish: Publish
 ) -> RuntimeLabelOut:
-    """Add a label to `labels`. `builder` is the service of the set now: its known label
-    embeddings are reused, so only the new text goes through the text tower."""
-    if not builder.supports_runtime_labels:
-        raise HTTPException(status.HTTP_409_CONFLICT, f"{builder.model_name} has a fixed label set")
+    """Add a label to `labels`. The service of the set, read under the lock, builds the new
+    one: its known label embeddings are reused, so only the new text needs the text tower."""
     parent = (body.topic_parent or "") if body.new_topic else None
     async with request.app.state.admin_lock:
+        builder = _builder(current)
         try:
             item, new_service = await run_in_threadpool(
                 labels.add, body.name, body.topic, body.prompt, parent, builder.with_taxonomy
@@ -135,15 +155,10 @@ async def _add(
 
 
 async def _remove(
-    request: Request,
-    label_id: str,
-    labels: RuntimeLabels,
-    builder: ClassificationService,
-    publish: Publish,
+    request: Request, label_id: str, labels: RuntimeLabels, current: Current, publish: Publish
 ) -> Response:
-    if not builder.supports_runtime_labels:
-        raise HTTPException(status.HTTP_409_CONFLICT, "no model with runtime labels loaded")
     async with request.app.state.admin_lock:
+        builder = _builder(current)
         try:
             new_service = await run_in_threadpool(labels.remove, label_id, builder.with_taxonomy)
         except KeyError as exc:
@@ -200,17 +215,18 @@ async def add_runtime_label(
     service: Annotated[ClassificationService, Depends(get_service)],
 ) -> RuntimeLabelOut:
     """Add a label to the default set; only its text is embedded (no retraining)."""
+    if not service.supports_runtime_labels:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"{service.model_name} has a fixed label set")
     labels: RuntimeLabels = request.app.state.runtime_labels
-    return await _add(request, body, labels, service, _publish_default(request))
+    return await _add(request, body, labels, _current_default(request), _publish_default(request))
 
 
 @router.delete("/v1/labels/{label_id}", status_code=status.HTTP_204_NO_CONTENT, responses=_ERRORS)
 async def delete_runtime_label(_: Admin, request: Request, label_id: str) -> Response:
-    current: ClassificationService | None = request.app.state.service
-    if current is None:
-        raise HTTPException(status.HTTP_409_CONFLICT, "no model with runtime labels loaded")
     labels: RuntimeLabels = request.app.state.runtime_labels
-    return await _remove(request, label_id, labels, current, _publish_default(request))
+    return await _remove(
+        request, label_id, labels, _current_default(request), _publish_default(request)
+    )
 
 
 @router.post("/v1/feedback", status_code=status.HTTP_201_CREATED, responses=_ERRORS)
@@ -254,8 +270,14 @@ async def add_org_label(
 ) -> RuntimeLabelOut:
     """Add a label to the org's set. The first change copies the default set into the org."""
     labels = _org_labels(request, org_id)
-    builder = await service_for(request, org_id)
-    return await _add(request, body, labels, builder, _publish_org(request, org_id, labels))
+    await service_for(request, org_id)  # builds the org service into the cache when missing
+    return await _add(
+        request,
+        body,
+        labels,
+        _current_org(request, org_id, labels),
+        _publish_org(request, org_id, labels),
+    )
 
 
 @router.delete(
@@ -266,8 +288,14 @@ async def add_org_label(
 async def delete_org_label(_: Admin, request: Request, org_id: OrgId, label_id: str) -> Response:
     """Remove an added label from the org's set. Packaged labels stay (409)."""
     labels = _org_labels(request, org_id)
-    builder = await service_for(request, org_id)
-    return await _remove(request, label_id, labels, builder, _publish_org(request, org_id, labels))
+    await service_for(request, org_id)  # builds the org service into the cache when missing
+    return await _remove(
+        request,
+        label_id,
+        labels,
+        _current_org(request, org_id, labels),
+        _publish_org(request, org_id, labels),
+    )
 
 
 @router.post("/v1/orgs/{org_id}/feedback", status_code=status.HTTP_201_CREATED, responses=_ERRORS)
