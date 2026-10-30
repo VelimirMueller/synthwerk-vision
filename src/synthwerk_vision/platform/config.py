@@ -1,9 +1,12 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from synthwerk_vision.api.origin import OriginError, canonical_origin
 
 
 class Settings(BaseSettings):
@@ -30,7 +33,15 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = Field(
         default=["http://localhost:5173", "http://localhost:8080"],
-        description="Browser origins allowed to call the API. Never use '*' in production.",
+        description="JSON list of first-party origins allowed to call the widget routes "
+        "(classification, upload). Customer origins come from identity. Each item is "
+        "scheme://host[:port], http only for localhost; an invalid item stops the start.",
+    )
+    identity_url: str | None = Field(
+        default=None,
+        description="Identity base URL as vision reaches it, e.g. http://identity:8080. "
+        "Asked which customer origins an app lists (GET /internal/v1/widget-origins). "
+        "Unset: the widget routes answer CORS for cors_origins only.",
     )
     storage_backend: Literal["local", "s3"] = Field(
         default="local",
@@ -118,6 +129,32 @@ class Settings(BaseSettings):
     uncertain_below: float = Field(
         default=0.5, ge=0, le=1, description="Flag a result when the best root topic scores lower."
     )
+
+    @field_validator("cors_origins")
+    @classmethod
+    def _canonical_origins(cls, value: list[str]) -> list[str]:
+        out: list[str] = []
+        for index, item in enumerate(value):
+            try:
+                origin = canonical_origin(item.strip())
+            except OriginError:
+                raise ValueError(
+                    f"item {index} is not an origin: use scheme://host[:port], "
+                    "http only for localhost"
+                ) from None
+            if origin not in out:
+                out.append(origin)
+        return out
+
+    @field_validator("identity_url")
+    @classmethod
+    def _identity_url(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        parts = urlsplit(value.strip())
+        if parts.scheme not in {"http", "https"} or not parts.hostname or parts.query:
+            raise ValueError("must be an http(s) base URL, e.g. http://identity:8080")
+        return value.strip().rstrip("/")
 
 
 @lru_cache

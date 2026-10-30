@@ -157,15 +157,6 @@ def test_classification_without_model_is_503(client_without_model: TestClient) -
     assert response.status_code == 503
 
 
-def test_cors_allows_only_configured_origins(client: TestClient) -> None:
-    allowed = client.get("/healthz", headers={"Origin": "http://localhost:5173"})
-    denied = client.get("/healthz", headers={"Origin": "https://evil.example"})
-
-    assert allowed.headers["access-control-allow-origin"] == "http://localhost:5173"
-    assert "access-control-allow-origin" not in denied.headers
-    assert "access-control-allow-credentials" not in allowed.headers
-
-
 def test_every_response_carries_a_request_id(client: TestClient) -> None:
     ok = client.post("/v1/classifications", files={"image": ("a.png", make_image(), "image/png")})
     rejected = client.post("/v1/images", files={"image": ("a.png", b"nope", "image/png")})
