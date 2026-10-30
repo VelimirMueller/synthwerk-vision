@@ -147,7 +147,16 @@ def test_settings_identity_url_valid(value: str | None, stored: str | None) -> N
     assert Settings(identity_url=value).identity_url == stored
 
 
-@pytest.mark.parametrize("value", ["identity:8080", "ftp://identity", "http://identity?x=1"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "identity:8080",
+        "ftp://identity",
+        "http://identity?x=1",
+        "http://identity#x",
+        "http://u:p@identity",
+    ],
+)
 def test_settings_identity_url_invalid_stops_the_start(value: str) -> None:
     with pytest.raises(ValidationError, match="http"):
         Settings(identity_url=value)

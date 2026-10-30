@@ -152,7 +152,13 @@ class Settings(BaseSettings):
         if value is None or not value.strip():
             return None
         parts = urlsplit(value.strip())
-        if parts.scheme not in {"http", "https"} or not parts.hostname or parts.query:
+        if (
+            parts.scheme not in {"http", "https"}
+            or not parts.hostname
+            or parts.query
+            or parts.fragment
+            or parts.username is not None
+        ):
             raise ValueError("must be an http(s) base URL, e.g. http://identity:8080")
         return value.strip().rstrip("/")
 
