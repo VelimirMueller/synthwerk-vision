@@ -1,12 +1,15 @@
 import hashlib
+import logging
 import time
+from collections import OrderedDict
+from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from starlette.concurrency import run_in_threadpool
 
-from synthwerk_vision.api.auth import TOKEN_ERRORS, require_widget_token
-from synthwerk_vision.feedback import FeedbackStore
+from synthwerk_vision.api.auth import TOKEN_ERRORS, WidgetToken, require_widget_token
+from synthwerk_vision.feedback import DEFAULT_ORG, FeedbackStore
 from synthwerk_vision.images import (
     InvalidImageError,
     UploadTooLargeError,
@@ -15,6 +18,7 @@ from synthwerk_vision.images import (
     read_limited,
     validate_image,
 )
+from synthwerk_vision.label_sets import LabelSets
 from synthwerk_vision.platform.config import Settings, get_settings
 from synthwerk_vision.runtime_labels import signature
 from synthwerk_vision.schemas import (
@@ -30,7 +34,49 @@ from synthwerk_vision.schemas import (
 from synthwerk_vision.service import Classification, ClassificationService, ScoredLabel, ScoredTopic
 from synthwerk_vision.storage import ImageStorage, StorageFullError
 
+logger = logging.getLogger("synthwerk_vision")
 router = APIRouter()
+
+# Services of org label sets kept in one worker. A set past this many is rebuilt on its next
+# request from the label embedding cache (milliseconds, no text tower).
+MAX_ORG_SERVICES = 64
+
+
+@dataclass(frozen=True)
+class _OrgService:
+    service: ClassificationService
+    signature: tuple[int, int] | None
+
+
+class OrgServices:
+    """The built services of org label sets, least recently used first out."""
+
+    def __init__(self, limit: int = MAX_ORG_SERVICES) -> None:
+        self._limit = limit
+        self._items: OrderedDict[str, _OrgService] = OrderedDict()
+
+    def get(self, org_id: str, current: tuple[int, int] | None) -> ClassificationService | None:
+        """The service of the org when it was built from the file state `current`."""
+        item = self._items.get(org_id)
+        if item is None or item.signature != current:
+            return None
+        self._items.move_to_end(org_id)
+        return item.service
+
+    def put(
+        self, org_id: str, service: ClassificationService, current: tuple[int, int] | None
+    ) -> None:
+        self._items[org_id] = _OrgService(service, current)
+        self._items.move_to_end(org_id)
+        while len(self._items) > self._limit:
+            self._items.popitem(last=False)
+
+    def drop(self, org_id: str) -> None:
+        self._items.pop(org_id, None)
+
+    def __len__(self) -> int:
+        return len(self._items)
+
 
 _IMAGE_ERRORS: dict[int | str, dict[str, object]] = {
     413: {"model": ErrorOut, "description": "Upload exceeds the size limit"},
@@ -63,6 +109,45 @@ async def get_service(request: Request) -> ClassificationService:
                 state.service = await run_in_threadpool(current.with_taxonomy, taxonomy)
                 state.overlay_signature = seen
         service = state.service
+    return service
+
+
+async def service_for(request: Request, org_id: str | None) -> ClassificationService:
+    """The service for the label set of an org. An org without an own set (and a call without
+    an org) gets the default service. An org set changed by another worker shows up as a
+    changed file; this worker then rebuilds it, from the label embedding cache."""
+    default = await get_service(request)
+    if org_id is None or not default.supports_runtime_labels:
+        return default
+    state = request.app.state
+    sets: LabelSets = state.label_sets
+    try:
+        labels = sets.org(org_id)
+    except ValueError:
+        logger.warning(
+            "org id is not a safe file name: default label set used",
+            extra={"event.name": "vision.labels.bad_org_id"},
+        )
+        return default
+    cache: OrgServices = state.org_services
+    current = signature(labels.overlay)
+    if current is None:
+        cache.drop(org_id)
+        return default
+    service = cache.get(org_id, current)
+    if service is not None:
+        return service
+    async with state.admin_lock:
+        base: ClassificationService = state.service
+        current = signature(labels.overlay)
+        if current is None:
+            cache.drop(org_id)
+            return base
+        service = cache.get(org_id, current)
+        if service is None:
+            taxonomy = await run_in_threadpool(labels.load, state.load_base_taxonomy)
+            service = await run_in_threadpool(base.with_taxonomy, taxonomy)
+            cache.put(org_id, service, current)
     return service
 
 
@@ -124,15 +209,20 @@ async def upload_image(
 async def classify_image(
     request: Request,
     image: Annotated[ValidatedImage, Depends(validated_image)],
-    service: Annotated[ClassificationService, Depends(get_service)],
+    principal: WidgetToken,
 ) -> ClassificationOut:
     """Classify an image without storing it.
 
     Returns the top-k labels with their topic path (e.g. animal → mammal → dog → beagle) and
     the topic scores, where a topic's score is the summed probability of every label below it.
+    The label set and the corrections are those of the token's org (synthwerk#44).
     """
+    org_id = principal.org_id if principal else None
+    service = await service_for(request, org_id)
     result = await run_in_threadpool(service.classify, image.data)
-    correction = await run_in_threadpool(_correction, request, service, image.data, result)
+    correction = await run_in_threadpool(
+        _correction, request, service, image.data, result, org_id or DEFAULT_ORG
+    )
     total_ms = round((time.perf_counter() - request.state.started) * 1000, 2)
     return ClassificationOut(
         request_id=request.state.request_id,
@@ -155,7 +245,11 @@ async def classify_image(
 
 
 def _correction(
-    request: Request, service: ClassificationService, data: bytes, result: Classification
+    request: Request,
+    service: ClassificationService,
+    data: bytes,
+    result: Classification,
+    org_id: str,
 ) -> CorrectionOut | None:
     store: FeedbackStore | None = request.app.state.feedback
     if store is None:
@@ -164,7 +258,7 @@ def _correction(
     if len(store) == 0:
         return None
     taxonomy = service.taxonomy
-    recall = store.recall(dhash(data), {label.id for label in taxonomy.labels})
+    recall = store.recall(dhash(data), {label.id for label in taxonomy.labels}, org_id)
     if recall is None:
         return None
     label = taxonomy.label(recall.feedback.label_id)

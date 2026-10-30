@@ -37,14 +37,35 @@ class RuntimeLabelError(Exception):
 
 
 class RuntimeLabels:
-    def __init__(self, overlay: Path, base_ref: str) -> None:
+    """One label set: an overlay file on top of the base taxonomy.
+
+    A set with a `seed` (an org set seeded by the default set) reads the seed while it has no
+    file of its own. Its first change copies the seed's labels into its own file; later changes
+    of the seed do not reach it.
+    """
+
+    def __init__(
+        self,
+        overlay: Path,
+        base_ref: str,
+        *,
+        lock: Path | None = None,
+        seed: "RuntimeLabels | None" = None,
+    ) -> None:
         self.overlay = overlay
         self.base_ref = base_ref  # "package:<file>" or an absolute path
+        self.lock = lock or overlay.parent / ".labels.lock"
+        self.seed = seed
+
+    @property
+    def own(self) -> bool:
+        """True when this set has its own file (an org set that was changed at least once)."""
+        return self.overlay.is_file()
 
     def load(self, base: Callable[[], Taxonomy]) -> Taxonomy:
-        """The overlay on top of its base, or the base alone when nothing was added yet."""
+        """The overlay on top of its base. Without a file: the seed, or the base alone."""
         if not self.overlay.is_file():
-            return base()
+            return self.seed.load(base) if self.seed else base()
         extends = self._document().get("extends")
         if extends != self.base_ref:
             raise TaxonomyError(
@@ -54,7 +75,9 @@ class RuntimeLabels:
         return Taxonomy.load(self.overlay)
 
     def labels(self) -> list[dict[str, Any]]:
-        return list(self._document().get("labels") or []) if self.overlay.is_file() else []
+        if self.overlay.is_file():
+            return list(self._document().get("labels") or [])
+        return self.seed.labels() if self.seed else []
 
     def add(
         self,
@@ -76,7 +99,7 @@ class RuntimeLabels:
         parent: str | None,
         apply: Callable[[Taxonomy], T],
     ) -> tuple[dict[str, Any], T]:
-        document = self._document() if self.overlay.is_file() else self._empty()
+        document = self._start()
         label: dict[str, Any] = {"id": ID_PREFIX + _slug(name), "name": name, "topic": topic}
         if prompt:
             label["prompt"] = prompt
@@ -94,7 +117,7 @@ class RuntimeLabels:
             return self._remove(label_id, apply)
 
     def _remove(self, label_id: str, apply: Callable[[Taxonomy], T]) -> T:
-        document = self._document() if self.overlay.is_file() else self._empty()
+        document = self._start()
         remaining = [item for item in document["labels"] if item["id"] != label_id]
         if len(remaining) == len(document["labels"]):
             raise KeyError(label_id)
@@ -105,8 +128,8 @@ class RuntimeLabels:
     def _exclusive(self) -> Iterator[None]:
         """Serialise read-modify-write of the overlay across worker *processes*; without it two
         workers adding labels at once would each replace the file and one label would be lost."""
-        self.overlay.parent.mkdir(parents=True, exist_ok=True)
-        with (self.overlay.parent / ".labels.lock").open("a") as lock:
+        self.lock.parent.mkdir(parents=True, exist_ok=True)
+        with self.lock.open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             try:
                 yield
@@ -132,6 +155,17 @@ class RuntimeLabels:
         document = yaml.safe_load(self.overlay.read_text(encoding="utf-8")) or {}
         document.setdefault("topics", [])
         document.setdefault("labels", [])
+        return document
+
+    def _start(self) -> dict[str, Any]:
+        """The document a change starts from: own file, else a copy of the seed, else empty."""
+        if self.overlay.is_file():
+            return self._document()
+        document = self._empty()
+        if self.seed is not None and self.seed.overlay.is_file():
+            seeded = self.seed._document()
+            document["topics"] = list(seeded["topics"])
+            document["labels"] = list(seeded["labels"])
         return document
 
     def _empty(self) -> dict[str, Any]:

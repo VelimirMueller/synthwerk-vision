@@ -8,7 +8,7 @@ paths: ["src/synthwerk_vision/main.py", "src/synthwerk_vision/platform/config.py
 api: ["POST /v1/classifications"]
 events: []
 mcp: []
-updated: 2026-10-29
+updated: 2026-10-30
 ---
 
 # Image classification
@@ -26,6 +26,7 @@ updated: 2026-10-29
 - The response contains the best label, the best root topic, the top-k labels and the topics.
 - The response sets `uncertain` to `true` when the best root topic scores below the limit.
 - The service does not store the image.
+- The label set and the corrections are those of the widget token's org. An org without its own set gets the default set. See [Label sets per org](label-sets.md).
 - Every response has an `X-Request-ID` header, a 500 too. A classification response also has `request_id`.
 - When the model files are missing, the service starts, and `/readyz` reports `down` (503). See [Health and telemetry](health-and-telemetry.md).
 - When the taxonomy is broken, the service does not start.
@@ -87,3 +88,4 @@ updated: 2026-10-29
 | 2026-10-29 | A 500 response has the `X-Request-ID` header (#27). |
 | 2026-10-29 | New settings `UPLOAD_QUOTA_BYTES` and `UPLOAD_QUOTA_FILES` for `POST /v1/images`. Classification does not change (#19). |
 | 2026-10-29 | The route needs a widget token (#76). The service does not start without the token settings. |
+| 2026-10-30 | The label set and the corrections come from the widget token's org (synthwerk#44). A SigLIP label set built by another worker loads from the label cache. |

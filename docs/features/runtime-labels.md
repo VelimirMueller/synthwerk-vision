@@ -8,19 +8,21 @@ paths: ["src/synthwerk_vision/api/admin.py", "src/synthwerk_vision/runtime_label
 api: ["GET /v1/labels", "POST /v1/labels", "DELETE /v1/labels/{label_id}"]
 events: []
 mcp: []
-updated: 2026-10-21
+updated: 2026-10-30
 ---
 
 # Runtime labels
 
 > **In 30 seconds**
 > - An admin adds or removes a text label while the service runs.
+> - These routes change the default set. Org sets: [label-sets.md](label-sets.md).
 > - The service does not retrain. It embeds only the new label text.
 > - Adding a label takes about 30 s, mostly to load the fp32 text tower.
 
 ## What it does
 
-- The service writes runtime labels to `$SYNTHWERK_VISION_DATA_DIR/labels.yaml`.
+- The service writes runtime labels of the default set to `$SYNTHWERK_VISION_DATA_DIR/label-sets/default.yaml`.
+- Every org without its own set uses the default set (synthwerk#44).
 - This file `extends` the configured base taxonomy, so it survives a restart.
 - The service stages and validates each change first. A failed change changes nothing.
 - The service builds the new model state completely, then swaps it in with one assignment.
@@ -71,3 +73,4 @@ updated: 2026-10-21
 |---|---|
 | 2026-10-09 | Rename to `synthwerk_vision`. The settings use the prefix `SYNTHWERK_VISION_`. |
 | 2026-10-21 | No behaviour change. The settings import moved to `platform/config.py` (#23). With an admin token, `/readyz` checks that the data directory is writable. |
+| 2026-10-30 | The routes change the default set in `label-sets/default.yaml`. Startup moves `labels.yaml` there (synthwerk#44). |

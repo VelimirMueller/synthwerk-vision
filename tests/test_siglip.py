@@ -234,6 +234,34 @@ def test_for_taxonomy_embeds_only_new_texts_and_leaves_the_original(tmp_path: Pa
     assert len(embedded) == 1, "a label set of known texts needs no text tower"
 
 
+def test_for_taxonomy_reads_a_label_set_another_worker_built(tmp_path: Path) -> None:
+    import copy
+
+    from tests.conftest import SMALL_TAXONOMY
+
+    document = copy.deepcopy(SMALL_TAXONOMY)
+    texts = [PROMPT_TEMPLATE.format(label["name"]) for label in document["labels"]]
+    document["labels"].append({"id": "r1", "name": "hut", "topic": "landscape", "index": 5})
+    grown = Taxonomy(document["topics"], document["labels"], 1)
+    cache = LabelEmbeddingCache(tmp_path)
+    stored = np.eye(6, 4, dtype=np.float32)
+    cache.store([*texts, PROMPT_TEMPLATE.format("hut")], stored)
+
+    def no_tower(new: list[str]) -> npt.NDArray[np.float32]:
+        raise AssertionError("a cached label set must not run the text tower")
+
+    worker = SiglipClassifier(
+        FakeSession(np.ones(4, dtype=np.float32)),
+        np.eye(5, 4, dtype=np.float32),
+        10.0,
+        texts=texts,
+        embed_texts=no_tower,
+        cache=cache,
+    )
+
+    assert worker.for_taxonomy(grown).num_classes == 6
+
+
 def test_for_taxonomy_without_text_tower_cannot_add_labels() -> None:
     import copy
 

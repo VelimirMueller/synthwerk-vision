@@ -15,9 +15,10 @@ from fastapi.responses import PlainTextResponse
 from synthwerk_vision import __version__
 from synthwerk_vision.api import admin
 from synthwerk_vision.api.auth import build_verifier
-from synthwerk_vision.api.routes import router
+from synthwerk_vision.api.routes import OrgServices, router
 from synthwerk_vision.classifier import Classifier, ModelNotAvailableError, OnnxClassifier
 from synthwerk_vision.feedback import FeedbackStore
+from synthwerk_vision.label_sets import LabelSets
 from synthwerk_vision.platform import health
 from synthwerk_vision.platform.config import Settings, get_settings
 from synthwerk_vision.platform.health import CheckResult, ReadinessCheck
@@ -59,14 +60,19 @@ def _load_classifier(settings: Settings, taxonomy: Taxonomy) -> Classifier | Non
         return None
 
 
-def runtime_labels(settings: Settings) -> RuntimeLabels:
-    """Overlay of labels added at runtime, on top of the configured base taxonomy."""
+def label_sets(settings: Settings) -> LabelSets:
+    """The default label set and the org sets, on top of the configured base taxonomy."""
     base_ref = (
         str(settings.taxonomy_path.resolve())
         if settings.taxonomy_path
         else f"package:{PACKAGED_TAXONOMY[settings.backend]}"
     )
-    return RuntimeLabels(settings.data_dir / "labels.yaml", base_ref)
+    return LabelSets(settings.data_dir, base_ref)
+
+
+def runtime_labels(settings: Settings) -> RuntimeLabels:
+    """The default label set: what every org without an own set and every platform call uses."""
+    return label_sets(settings).default
 
 
 def feedback_store(settings: Settings) -> FeedbackStore | None:
@@ -137,8 +143,11 @@ def create_app(
             max_bytes=settings.upload_quota_bytes,
             max_files=settings.upload_quota_files,
         )
+        app.state.label_sets = label_sets(settings)
+        app.state.label_sets.migrate()  # before the default set is read
         app.state.service = build_service(settings, classifier)
-        app.state.runtime_labels = runtime_labels(settings)
+        app.state.runtime_labels = app.state.label_sets.default
+        app.state.org_services = OrgServices()
         app.state.overlay_signature = signature(app.state.runtime_labels.overlay)
         app.state.load_base_taxonomy = lambda: Taxonomy.load(
             settings.taxonomy_path, packaged=PACKAGED_TAXONOMY[settings.backend]

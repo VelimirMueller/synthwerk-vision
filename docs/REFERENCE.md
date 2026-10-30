@@ -17,7 +17,7 @@ flowchart LR
 
 ## API and events
 
-- API spec: FastAPI serves it at `/docs` and `/openapi.json`. The contracts spec is planned (E1) in [synthwerk-contracts](https://github.com/VelimirMueller/synthwerk-contracts).
+- API spec: FastAPI serves it at `/docs` and `/openapi.json`. The admin routes of the org label sets are in [synthwerk-contracts](https://github.com/VelimirMueller/synthwerk-contracts) `openapi/vision/openapi.yaml` (synthwerk#44). The other routes follow.
 - Events: none yet.
 
 | Method | Path                  | Purpose                                     | Success | Errors        |
@@ -27,6 +27,7 @@ flowchart LR
 | POST   | `/v1/images`          | Store an image, return its generated id     | 201     | 401, 403, 413, 415, 422, 503 |
 | POST   | `/v1/classifications` | Classify an image (not stored)              | 200     | 401, 403, 413, 415, 422, 503 |
 | *admin* | `/v1/labels`, `/v1/feedback` | See [Runtime labels and corrections](#runtime-labels-and-corrections) | | 401, 404, 409 |
+| *admin* | `/v1/orgs/{org_id}/labels`, `/v1/orgs/{org_id}/feedback` | Label set and corrections of one org, see [Label sets per org](features/label-sets.md) | | 401, 404, 409, 422 |
 
 - `/healthz` and `/readyz` follow the Synthwerk health contract (`openapi/_shared/health.yaml` in
   synthwerk-contracts). `/health` is gone (#23).
@@ -166,8 +167,12 @@ Both towers are **fp32 on purpose**:
 
 ## Runtime labels and corrections
 
-Two admin endpoints change what the server knows while it runs. They need
+The admin endpoints change what the server knows while it runs. They need
 `Authorization: Bearer $SYNTHWERK_VISION_ADMIN_TOKEN` and **do not exist (404) when no token is set**.
+The routes below change the **default label set**. Each org can have its own set and its own
+corrections under `/v1/orgs/{org_id}/…` (synthwerk#44): see
+[Label sets per org](features/label-sets.md). The studio BFF calls those routes with the
+admin token after it checked that the user is an owner or admin of the org.
 
 | Method | Path | Does |
 |---|---|---|
@@ -187,11 +192,13 @@ curl -H "Authorization: Bearer $SYNTHWERK_VISION_ADMIN_TOKEN" -H 'content-type: 
   is dropped afterwards. The running service keeps answering meanwhile. The new service is
   built completely and then swapped in with one assignment, so no request sees a half-updated
   model.
-- **Persistence.** Runtime labels live in `$SYNTHWERK_VISION_DATA_DIR/labels.yaml`, an ordinary taxonomy
-  file that `extends` the configured base. It survives restarts and can be reviewed and edited.
+- **Persistence.** The default set lives in `$SYNTHWERK_VISION_DATA_DIR/label-sets/default.yaml`, an
+  ordinary taxonomy file that `extends` the configured base. Org sets live in
+  `label-sets/orgs/<org id>.yaml`. Startup moves the `labels.yaml` of older versions to the default set. It survives restarts and can be reviewed and edited.
   A change is staged and validated first; a failed change leaves file and service as they were.
 - **Corrections** are stored in `$SYNTHWERK_VISION_DATA_DIR/feedback.sqlite3`, keyed by the picture's
-  difference hash. When the same picture comes back (re-encoded or resized), the response
+  difference hash and the org. `POST /v1/feedback` writes a default correction; an org gets its own
+  correction first, then a default one, never one of another org. When the same picture comes back (re-encoded or resized), the response
   carries `correction` next to the unchanged model output. Clients should prefer it.
   Different photos are never affected. Semantic embeddings cannot do this safely: on the eval
   set a resized copy of one photo can be *less* similar (0.87) than two different photos (0.90).
@@ -318,14 +325,15 @@ src/synthwerk_vision/
   platform/otel.py    OpenTelemetry resource, OTLP exporters, FastAPI instrumentation
   platform/health.py  /healthz and /readyz (health contract)
   api/routes.py   HTTP layer and dependency wiring
-  api/admin.py    runtime labels and corrections (bearer token)
+  api/admin.py    label sets and corrections, default and per org (admin token)
   images.py       bounded reads, image validation, dHash
   storage.py      ImageStorage protocol + local disk implementation
   classifier.py   Classifier protocol (image -> probability vector) + MobileNetV2
   siglip.py       SigLIP 2: image/text towers, tokenizer, label-embedding cache
   taxonomy.py     topic tree, label paths, roll-up of probabilities into topic scores
-  runtime_labels.py  labels.yaml overlay + cross-process lock
-  feedback.py     corrections in SQLite, keyed by dHash
+  runtime_labels.py  one label set: taxonomy overlay, seed copy, cross-process lock
+  label_sets.py   default set + org sets on disk, migration of labels.yaml
+  feedback.py     corrections in SQLite, keyed by dHash and org
   service.py      classifier + taxonomy -> labels, topics, uncertainty, timings
   evaluation.py   manifest loading, cached downloads, metrics, markdown/JSON reports
   data/taxonomy_open.yaml, data/taxonomy.yaml
