@@ -1,7 +1,7 @@
 """Image storage. The API depends on the protocol; the backend comes from the settings.
 
 Both backends store an image under the same key, `<org>/<yyyy>/<mm>/<uuid4>.<ext>`, and keep
-a byte and a file quota per org.
+a byte and a file quota per org plus a byte cap for the whole store.
 
 - `LocalImageStorage`: files on the local disk. The default, for local development.
 - `S3ImageStorage`: an S3-compatible bucket (Supabase Storage in dev, stg and prd, #77).
@@ -11,8 +11,11 @@ import logging
 import os
 import re
 import threading
+import time
 import uuid
+import weakref
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
@@ -54,7 +57,7 @@ class ImageStorage(Protocol):
     def save(self, data: bytes, *, org_id: str, extension: str, content_type: str) -> str:
         """Persist data for the org and return the server-generated image id.
 
-        Raises StorageFullError when the data would exceed the org's quota, and
+        Raises StorageFullError when the data would exceed the org's quota or the total cap, and
         StorageUnavailableError when the backend cannot store it.
         """
         ...
@@ -69,37 +72,145 @@ def object_key(org_id: str, image_id: str, extension: str, now: datetime) -> str
     return f"{org_id}/{now:%Y}/{now:%m}/{image_id}.{extension}"
 
 
-class LocalImageStorage:
-    """Files on the local disk, bounded by a byte and a file quota per org.
+@dataclass
+class _Usage:
+    files: int
+    bytes: int
+    measured_at: float
 
-    Usage is measured from the org folder on every save, so files written by other worker
-    processes count too. Saves in one process are serialised; two processes can each pass
-    the check at the same moment, so the quota can be exceeded by at most one upload per
-    other worker.
+
+class _OrgLock:
+    """A lock that a WeakValueDictionary can hold: it goes away when no save uses it."""
+
+    __slots__ = ("__weakref__", "lock")
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+
+
+class _QuotaStorage:
+    """Quota logic shared by both backends: a byte and a file quota per org, and a byte cap
+    for the whole store.
+
+    - Usage lives in counters per process. A counter starts from one scan (a folder walk or a
+      prefix listing) and is scanned again when it is older than `REFRESH_S`, so uploads and
+      deletes by other workers or instances show up within that time. Between scans, each
+      other worker or instance can add uploads that this process does not see yet.
+    - Each org has its own lock, held across the scan and the write of that org only. The
+      total counter is reserved and released under a short lock with no I/O, so a slow write
+      for one org never blocks another org.
     """
 
+    REFRESH_S = 60.0
+
     def __init__(
-        self, root: Path, *, max_bytes: int, max_files: int, clock: Clock = _utc_now
+        self,
+        *,
+        max_bytes: int,
+        max_files: int,
+        max_total_bytes: int,
+        clock: Clock = _utc_now,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._root = root.resolve()
         self._max_bytes = max_bytes
         self._max_files = max_files
+        self._max_total_bytes = max_total_bytes
         self._clock = clock
-        self._lock = threading.Lock()
+        self._monotonic = monotonic
+        self._org_locks: weakref.WeakValueDictionary[str, _OrgLock] = weakref.WeakValueDictionary()
+        self._org_usage: dict[str, _Usage] = {}
+        self._total: _Usage | None = None
+        self._lock = threading.Lock()  # guards the dicts and counters; never held across I/O
 
     def save(self, data: bytes, *, org_id: str, extension: str, content_type: str) -> str:
         image_id = uuid.uuid4().hex
-        path = self._root / object_key(org_id, image_id, extension, self._clock())
+        key = object_key(org_id, image_id, extension, self._clock())
+        size = len(data)
         with self._lock:
-            files, used = self._usage(self._root / org_id)
-            if files + 1 > self._max_files or used + len(data) > self._max_bytes:
+            org_lock = self._org_locks.get(org_id)
+            if org_lock is None:
+                org_lock = self._org_locks[org_id] = _OrgLock()
+        with org_lock.lock:
+            org = self._org_counter(org_id)
+            if org.files + 1 > self._max_files or org.bytes + size > self._max_bytes:
                 raise StorageFullError("upload storage quota reached")
-            path.parent.mkdir(parents=True, exist_ok=True)
-            self._write(path, data)
+            self._reserve_total(size)
+            try:
+                self._put(key, data, content_type)
+            except BaseException:
+                with self._lock:
+                    assert self._total is not None  # noqa: S101 (set by _reserve_total)
+                    self._total.bytes -= size
+                raise
+            with self._lock:
+                org.files += 1
+                org.bytes += size
         return image_id
 
-    @staticmethod
-    def _usage(folder: Path) -> tuple[int, int]:
+    def _org_counter(self, org_id: str) -> _Usage:
+        """The org's counter; called with the org lock held, so one scan per org at a time."""
+        with self._lock:
+            usage = self._org_usage.get(org_id)
+        if usage is None or self._stale(usage):
+            files, used = self._scan(f"{org_id}/", self._max_files, self._max_bytes)
+            usage = _Usage(files, used, self._monotonic())
+            with self._lock:
+                self._org_usage[org_id] = usage
+        return usage
+
+    def _reserve_total(self, size: int) -> None:
+        with self._lock:
+            total = self._total
+        if total is None or self._stale(total):
+            # Scanned outside the lock: two orgs may scan at the same moment, the later wins.
+            _, used = self._scan(None, None, self._max_total_bytes)
+            with self._lock:
+                self._total = total = _Usage(0, used, self._monotonic())
+        with self._lock:
+            if total.bytes + size > self._max_total_bytes:
+                raise StorageFullError("upload storage quota reached")
+            total.bytes += size
+
+    def _stale(self, usage: _Usage) -> bool:
+        return self._monotonic() - usage.measured_at > self.REFRESH_S
+
+    def _scan(
+        self, prefix: str | None, stop_files: int | None, stop_bytes: int
+    ) -> tuple[int, int]:  # pragma: no cover - each backend overrides it
+        raise NotImplementedError
+
+    def _put(self, key: str, data: bytes, content_type: str) -> None:  # pragma: no cover
+        raise NotImplementedError
+
+
+class LocalImageStorage(_QuotaStorage):
+    """Files on the local disk under `<root>/<key>`. The default, for local development.
+
+    Files open with `O_EXCL`, so an upload never overwrites a file; a failed write leaves no
+    partial file.
+    """
+
+    def __init__(
+        self,
+        root: Path,
+        *,
+        max_bytes: int,
+        max_files: int,
+        max_total_bytes: int,
+        clock: Clock = _utc_now,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        super().__init__(
+            max_bytes=max_bytes,
+            max_files=max_files,
+            max_total_bytes=max_total_bytes,
+            clock=clock,
+            monotonic=monotonic,
+        )
+        self._root = root.resolve()
+
+    def _scan(self, prefix: str | None, stop_files: int | None, stop_bytes: int) -> tuple[int, int]:
+        folder = self._root / prefix if prefix else self._root
         files = used = 0
         if not folder.is_dir():
             return files, used
@@ -113,8 +224,9 @@ class LocalImageStorage:
                 used += stat.st_size
         return files, used
 
-    @staticmethod
-    def _write(path: Path, data: bytes) -> None:
+    def _put(self, key: str, data: bytes, content_type: str) -> None:
+        path = self._root / key
+        path.parent.mkdir(parents=True, exist_ok=True)
         # O_EXCL: never overwrite an existing file, even on a uuid collision.
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
         try:
@@ -127,62 +239,64 @@ class LocalImageStorage:
             raise
 
 
-class S3ImageStorage:
-    """Objects in an S3-compatible bucket, bounded by a byte and a file quota per org.
+class S3ImageStorage(_QuotaStorage):
+    """Objects in an S3-compatible bucket (Supabase Storage in dev, stg and prd, #77).
 
-    The quota is measured by listing the org prefix on every save: no usage table to keep in
-    step, and uploads from every instance count. A listing page holds 1000 keys, so the check
-    costs at most `max_files / 1000` requests. Saves in one process are serialised; two
-    instances can each pass the check at the same moment, so the quota can be exceeded by at
-    most one upload per other instance or worker.
-
-    Objects get the content type of the decoded image and no ACL: they stay as private as
-    the bucket.
+    - Counters start from a listing (the org prefix, or the whole bucket for the total) and
+      are listed again after `REFRESH_S`, not on every save. No usage table to keep in step.
+      A listing page holds 1000 keys and stops once the quota is reached.
+    - Objects get the content type of the decoded image and no ACL: they stay as private as
+      the bucket.
     """
 
     LIST_PAGE = 1000
 
     def __init__(
-        self, store: S3Store, *, max_bytes: int, max_files: int, clock: Clock = _utc_now
+        self,
+        store: S3Store,
+        *,
+        max_bytes: int,
+        max_files: int,
+        max_total_bytes: int,
+        clock: Clock = _utc_now,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
+        super().__init__(
+            max_bytes=max_bytes,
+            max_files=max_files,
+            max_total_bytes=max_total_bytes,
+            clock=clock,
+            monotonic=monotonic,
+        )
         self._store = store
-        self._max_bytes = max_bytes
-        self._max_files = max_files
-        self._clock = clock
-        self._lock = threading.Lock()
 
     def save(self, data: bytes, *, org_id: str, extension: str, content_type: str) -> str:
-        image_id = uuid.uuid4().hex
-        key = object_key(org_id, image_id, extension, self._clock())
-        with self._lock:
-            try:
-                files, used = self._usage(f"{org_id}/")
-                if files + 1 > self._max_files or used + len(data) > self._max_bytes:
-                    raise StorageFullError("upload storage quota reached")
-                obstore.put(
-                    self._store,
-                    key,
-                    data,
-                    attributes={"Content-Type": content_type},
-                    use_multipart=False,
-                )
-            except (ObjectStoreError, OSError) as exc:
-                logger.warning(
-                    "object store request failed",
-                    extra={"event.name": "vision.storage.failed", "error.type": type(exc).__name__},
-                )
-                raise StorageUnavailableError("upload storage is not available") from exc
-        return image_id
+        try:
+            return super().save(data, org_id=org_id, extension=extension, content_type=content_type)
+        except (ObjectStoreError, OSError) as exc:
+            logger.warning(
+                "object store request failed",
+                extra={"event.name": "vision.storage.failed", "error.type": type(exc).__name__},
+            )
+            raise StorageUnavailableError("upload storage is not available") from exc
 
-    def _usage(self, prefix: str) -> tuple[int, int]:
-        """Objects and bytes under the prefix. Stops early once a quota is already reached."""
+    def _scan(self, prefix: str | None, stop_files: int | None, stop_bytes: int) -> tuple[int, int]:
         files = used = 0
         for chunk in obstore.list(self._store, prefix=prefix, chunk_size=self.LIST_PAGE):
             files += len(chunk)
             used += sum(meta["size"] for meta in chunk)
-            if files >= self._max_files or used >= self._max_bytes:
-                break
+            if (stop_files is not None and files >= stop_files) or used >= stop_bytes:
+                break  # the quota is reached; the rest cannot change the answer
         return files, used
+
+    def _put(self, key: str, data: bytes, content_type: str) -> None:
+        obstore.put(
+            self._store,
+            key,
+            data,
+            attributes={"Content-Type": content_type},
+            use_multipart=False,
+        )
 
     async def reachable(self) -> bool:
         """True when the bucket exists and the credentials may list it."""
@@ -253,9 +367,11 @@ def build_storage(settings: Settings) -> LocalImageStorage | S3ImageStorage:
             build_s3_store(settings),
             max_bytes=settings.upload_quota_bytes,
             max_files=settings.upload_quota_files,
+            max_total_bytes=settings.upload_quota_total_bytes,
         )
     return LocalImageStorage(
         settings.upload_dir,
         max_bytes=settings.upload_quota_bytes,
         max_files=settings.upload_quota_files,
+        max_total_bytes=settings.upload_quota_total_bytes,
     )

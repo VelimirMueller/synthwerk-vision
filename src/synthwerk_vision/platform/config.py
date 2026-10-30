@@ -47,6 +47,11 @@ class Settings(BaseSettings):
         gt=0,
         description="Files POST /v1/images may keep per org; more answers 507.",
     )
+    upload_quota_total_bytes: int = Field(
+        default=5 * 1024 * 1024 * 1024,
+        gt=0,
+        description="Bytes POST /v1/images may keep for all orgs together; more answers 507.",
+    )
     s3_endpoint: str | None = Field(
         default=None,
         description="S3 API URL, e.g. https://<project>.storage.supabase.co/storage/v1/s3.",

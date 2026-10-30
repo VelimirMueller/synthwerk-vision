@@ -267,6 +267,7 @@ unavailable. The fix is then to rebuild the set: `scripts/build_eval_manifest.py
 | `SYNTHWERK_VISION_UPLOAD_DIR`       | `uploads` (local backend)                      |
 | `SYNTHWERK_VISION_UPLOAD_QUOTA_BYTES` | `1073741824` (1 GiB): bytes kept per org     |
 | `SYNTHWERK_VISION_UPLOAD_QUOTA_FILES` | `10000`: files kept per org                  |
+| `SYNTHWERK_VISION_UPLOAD_QUOTA_TOTAL_BYTES` | `5368709120` (5 GiB): bytes kept for all orgs together. Keep it below the bucket or disk size |
 | `SYNTHWERK_VISION_S3_ENDPOINT`      | unset; **required** with `s3`. Supabase: `https://<project>.storage.supabase.co/storage/v1/s3`. `https` outside `local` and `ci` |
 | `SYNTHWERK_VISION_S3_REGION`        | unset; **required** with `s3`, such as `eu-central-1` |
 | `SYNTHWERK_VISION_S3_BUCKET`        | unset; **required** with `s3`. Keep the bucket private |
@@ -455,8 +456,9 @@ here with its source and license before it is used.
   at most 15 min). The service does not start without the token settings, unless
   `SYNTHWERK_VISION_AUTH_DISABLED=true` in `local` or `ci`. Rate limits still need a gateway.
 - `POST /v1/images` keeps at most `SYNTHWERK_VISION_UPLOAD_QUOTA_BYTES` and
-  `SYNTHWERK_VISION_UPLOAD_QUOTA_FILES` per org. When the quota is reached, it answers
-  507 and stores nothing. Nothing deletes old uploads: free space by hand or raise the quota.
+  `SYNTHWERK_VISION_UPLOAD_QUOTA_FILES` per org, and at most
+  `SYNTHWERK_VISION_UPLOAD_QUOTA_TOTAL_BYTES` for all orgs together. When a quota is reached, it
+  answers 507 and stores nothing. Nothing deletes old uploads: free space by hand or raise the quota.
 - Report a vulnerability through a private GitHub security advisory on this repo.
 
 ## Roadmap

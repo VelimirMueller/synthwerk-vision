@@ -4,6 +4,7 @@ no real Supabase call."""
 import asyncio
 import os
 import socket
+import threading
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import boto3
+import obstore
 import pytest
 from fastapi.testclient import TestClient
 from moto.server import ThreadedMotoServer
@@ -64,8 +66,30 @@ def test_object_key_unknown_extension_refused() -> None:
 # --- local backend ----------------------------------------------------------------------------
 
 
-def local(root: Path, *, max_bytes: int = 1024, max_files: int = 10) -> LocalImageStorage:
-    return LocalImageStorage(root, max_bytes=max_bytes, max_files=max_files, clock=clock)
+class FakeMonotonic:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def local(
+    root: Path,
+    *,
+    max_bytes: int = 1024,
+    max_files: int = 10,
+    max_total_bytes: int = 4096,
+    monotonic: FakeMonotonic | None = None,
+) -> LocalImageStorage:
+    return LocalImageStorage(
+        root,
+        max_bytes=max_bytes,
+        max_files=max_files,
+        max_total_bytes=max_total_bytes,
+        clock=clock,
+        monotonic=monotonic or FakeMonotonic(),
+    )
 
 
 def test_local_save_writes_under_org_key(tmp_path: Path) -> None:
@@ -106,22 +130,67 @@ def test_local_quota_counts_files_of_other_workers(tmp_path: Path) -> None:
     assert storage.save(b"ab", org_id="org-1", **PNG)
 
 
+def test_local_total_cap_reached_save_of_any_org_refused(tmp_path: Path) -> None:
+    storage = local(tmp_path, max_bytes=100, max_total_bytes=10)
+    storage.save(b"aaaa", org_id="org-1", **PNG)
+    storage.save(b"bbbb", org_id="org-2", **PNG)
+
+    with pytest.raises(StorageFullError, match="quota"):
+        storage.save(b"ccc", org_id="org-3", **PNG)  # each org is far below its own quota
+    assert storage.save(b"cc", org_id="org-3", **PNG)
+    assert len(files_in(tmp_path)) == 3
+
+
+def test_local_failed_write_releases_total_reservation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = local(tmp_path, max_total_bytes=4)
+    real_fsync = os.fsync
+    calls = iter([OSError("disk full")])
+
+    def fail_once(fd: int) -> None:
+        error = next(calls, None)
+        if error is not None:
+            raise error
+        real_fsync(fd)
+
+    monkeypatch.setattr("synthwerk_vision.storage.os.fsync", fail_once)
+
+    with pytest.raises(OSError, match="disk full"):
+        storage.save(b"aaaa", org_id="org-1", **PNG)
+    assert storage.save(b"aaaa", org_id="org-1", **PNG)  # the failed bytes were given back
+
+
+def test_local_counters_scanned_again_after_refresh_interval(tmp_path: Path) -> None:
+    monotonic = FakeMonotonic()
+    storage = local(tmp_path, max_bytes=10, monotonic=monotonic)
+    storage.save(b"a", org_id="org-1", **PNG)
+    other = tmp_path / "org-1" / "2026" / "09"
+    other.mkdir(parents=True)
+    (other / "from-another-instance.png").write_bytes(b"x" * 8)
+
+    assert storage.save(b"a", org_id="org-1", **PNG)  # counter not stale: 2 of 10 bytes
+    monotonic.now += LocalImageStorage.REFRESH_S + 1
+    with pytest.raises(StorageFullError):
+        storage.save(b"a", org_id="org-1", **PNG)  # rescanned: 10 of 10 bytes
+
+
 def test_local_quota_file_deleted_during_scan_skipped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    storage = local(tmp_path, max_files=2)
-    storage.save(b"a", org_id="org-1", **PNG)
+    older = tmp_path / "org-1" / "2026" / "09"
+    older.mkdir(parents=True)
+    (older / "deleted-by-another-worker.png").write_bytes(b"x")
     real_lstat = os.lstat
 
     def gone(path: str) -> os.stat_result:
-        if path.endswith(".png"):
+        if path.endswith("deleted-by-another-worker.png"):
             raise FileNotFoundError(path)
         return real_lstat(path)
 
     monkeypatch.setattr("synthwerk_vision.storage.os.lstat", gone)
 
-    assert storage.save(b"b", org_id="org-1", **PNG)  # the vanished file is not counted
-    assert storage.save(b"c", org_id="org-1", **PNG)
+    assert local(tmp_path, max_files=1).save(b"b", org_id="org-1", **PNG)  # not counted
 
 
 def test_local_write_error_partial_file_removed(
@@ -188,9 +257,21 @@ def s3_settings(settings: Settings, s3_endpoint: str, bucket: str) -> Settings:
     )
 
 
-def s3_storage(settings: Settings, *, max_bytes: int = 1024, max_files: int = 10) -> S3ImageStorage:
+def s3_storage(
+    settings: Settings,
+    *,
+    max_bytes: int = 1024,
+    max_files: int = 10,
+    max_total_bytes: int = 4096,
+    monotonic: FakeMonotonic | None = None,
+) -> S3ImageStorage:
     return S3ImageStorage(
-        build_s3_store(settings), max_bytes=max_bytes, max_files=max_files, clock=clock
+        build_s3_store(settings),
+        max_bytes=max_bytes,
+        max_files=max_files,
+        max_total_bytes=max_total_bytes,
+        clock=clock,
+        monotonic=monotonic or FakeMonotonic(),
     )
 
 
@@ -243,6 +324,69 @@ def test_s3_quota_counts_objects_of_other_instances_over_several_pages(
     assert storage.save(b"a", org_id="org-1", **PNG)  # 5th object: org-10 is not counted
     with pytest.raises(StorageFullError):
         storage.save(b"a", org_id="org-1", **PNG)
+
+
+def test_s3_listing_stops_once_the_quota_is_reached(
+    s3_settings: Settings, s3: Any, bucket: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(S3ImageStorage, "LIST_PAGE", 2)
+    for n in range(5):
+        s3.put_object(Bucket=bucket, Key=f"org-1/2026/09/other-{n}.png", Body=b"x")
+    pages: list[int] = []
+    real_list = obstore.list
+
+    def counting_list(store: Any, prefix: str | None = None, **kwargs: Any) -> Any:
+        for chunk in real_list(store, prefix=prefix, **kwargs):
+            pages.append(len(chunk))
+            yield chunk
+
+    monkeypatch.setattr("synthwerk_vision.storage.obstore.list", counting_list)
+
+    with pytest.raises(StorageFullError):
+        s3_storage(s3_settings, max_files=2).save(b"a", org_id="org-1", **PNG)
+    assert pages == [2]  # one page of 2 reached the file quota; 3 objects never listed
+
+
+def test_s3_total_cap_reached_save_of_any_org_refused(
+    s3_settings: Settings, s3: Any, bucket: str
+) -> None:
+    s3.put_object(Bucket=bucket, Key="org-9/2026/10/old.png", Body=b"x" * 6)
+    storage = s3_storage(s3_settings, max_bytes=100, max_total_bytes=10)
+    storage.save(b"aaa", org_id="org-1", **PNG)
+
+    with pytest.raises(StorageFullError, match="quota"):
+        storage.save(b"bb", org_id="org-2", **PNG)
+    assert len(keys(s3, bucket)) == 2
+
+
+def test_s3_slow_put_of_one_org_does_not_block_another_org(
+    s3_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = s3_storage(s3_settings)
+    entered, release = threading.Event(), threading.Event()
+    real_put = obstore.put
+
+    def put(store: Any, key: str, data: bytes, **kwargs: Any) -> Any:
+        if key.startswith("org-a/"):
+            entered.set()
+            assert release.wait(5)
+        return real_put(store, key, data, **kwargs)
+
+    monkeypatch.setattr("synthwerk_vision.storage.obstore.put", put)
+    slow = threading.Thread(target=lambda: storage.save(b"a", org_id="org-a", **PNG))
+    slow.start()
+    try:
+        assert entered.wait(5)
+        finished: list[str] = []
+        fast = threading.Thread(
+            target=lambda: finished.append(storage.save(b"b", org_id="org-b", **PNG))
+        )
+        fast.start()
+        fast.join(5)
+        assert finished, "org-b waited for the slow put of org-a"
+    finally:
+        release.set()
+        slow.join(5)
 
 
 def test_s3_endpoint_down_save_unavailable(s3_settings: Settings) -> None:
@@ -348,6 +492,18 @@ def test_upload_s3_backend_stored_under_token_org(
     assert key.startswith("org-1/") and key.endswith(f"/{response.json()['id']}.jpg")
     assert s3.head_object(Bucket=bucket, Key=key)["ContentType"] == "image/jpeg"
     assert not s3_settings.upload_dir.exists()
+
+
+def test_upload_total_cap_reached_507(s3_settings: Settings) -> None:
+    image = make_image()
+    capped = s3_settings.model_copy(update={"upload_quota_total_bytes": len(image) + 1})
+
+    with s3_client(capped) as client:
+        first = client.post("/v1/images", files={"image": ("a.png", image, "image/png")})
+        second = client.post("/v1/images", files={"image": ("b.png", image, "image/png")})
+
+    assert (first.status_code, second.status_code) == (201, 507)
+    assert second.json() == {"detail": "upload storage quota reached"}
 
 
 def test_upload_s3_backend_down_503(s3_settings: Settings) -> None:
