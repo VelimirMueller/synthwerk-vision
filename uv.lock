@@ -1681,6 +1681,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "numpy" },
     { name = "obstore" },
     { name = "onnxruntime" },
@@ -1719,6 +1720,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.28" },
     { name = "numpy", specifier = ">=2.1" },
     { name = "obstore", specifier = ">=0.12.1,<0.13" },
     { name = "onnxruntime", specifier = ">=1.20" },

@@ -9,12 +9,17 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
 from synthwerk_vision import __version__
 from synthwerk_vision.api import admin
 from synthwerk_vision.api.auth import build_verifier
+from synthwerk_vision.api.cors import (
+    IdentityOrigins,
+    OriginLookup,
+    OriginPolicy,
+    WidgetCorsMiddleware,
+)
 from synthwerk_vision.api.routes import OrgServices, router
 from synthwerk_vision.classifier import Classifier, ModelNotAvailableError, OnnxClassifier
 from synthwerk_vision.feedback import FeedbackStore
@@ -139,12 +144,28 @@ def _storage_check(storage: S3ImageStorage) -> ReadinessCheck:
     return ReadinessCheck("storage", run, timeout_s=0.45)
 
 
+def _lookup(settings: Settings, given: OriginLookup | None) -> OriginLookup | None:
+    """Identity origin lookup for widget CORS; not part of /readyz (identity down only
+    narrows CORS to the static list)."""
+    if given is not None:
+        return given
+    if settings.identity_url is not None:
+        return IdentityOrigins(settings.identity_url)
+    if settings.platform_env not in {"local", "ci"}:
+        logger.warning(
+            "widget CORS uses the static list only: identity is not configured",
+            extra={"event.name": "vision.cors.not_configured"},
+        )
+    return None
+
+
 def create_app(
     settings: Settings | None = None,
     *,
     storage: ImageStorage | None = None,
     classifier: Classifier | None = None,
     telemetry: Telemetry | None = None,
+    origin_lookup: OriginLookup | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     resource = build_resource(settings)
@@ -152,6 +173,7 @@ def create_app(
     verifier = build_verifier(settings)  # before telemetry: a config error starts nothing
     storage = storage or build_storage(settings)
     telemetry = telemetry or setup_telemetry(resource)
+    lookup = _lookup(settings, origin_lookup)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -170,6 +192,8 @@ def create_app(
         try:
             yield
         finally:
+            if isinstance(lookup, IdentityOrigins):
+                await lookup.aclose()
             telemetry.shutdown()
 
     app = FastAPI(title="Synthwerk Vision API", version=__version__, lifespan=lifespan)
@@ -180,13 +204,10 @@ def create_app(
         app.state.readiness_checks.append(_data_dir_check(settings.data_dir))
     if isinstance(storage, S3ImageStorage):
         app.state.readiness_checks.append(_storage_check(storage))
+    # Inside request_context: a preflight gets a request id and a log line too.
     app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.cors_origins,
-        allow_credentials=False,
-        allow_methods=["GET", "POST", "DELETE"],
-        allow_headers=["Content-Type", "X-Request-ID", "Authorization"],
-        expose_headers=["X-Request-ID"],
+        WidgetCorsMiddleware,
+        policy=OriginPolicy(settings.cors_origins, lookup),
     )
 
     @app.middleware("http")

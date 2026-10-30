@@ -262,7 +262,8 @@ unavailable. The fix is then to rebuild the set: `scripts/build_eval_manifest.py
 
 | Variable                     | Default                                        |
 |------------------------------|------------------------------------------------|
-| `SYNTHWERK_VISION_CORS_ORIGINS`     | `["http://localhost:5173","http://localhost:8080"]` |
+| `SYNTHWERK_VISION_CORS_ORIGINS`     | `["http://localhost:5173","http://localhost:8080"]`: JSON list of first-party origins for the widget routes. `scheme://host[:port]`, `http` only for localhost; an invalid item (also `*`) stops the start |
+| `SYNTHWERK_VISION_IDENTITY_URL`     | unset: widget CORS uses `CORS_ORIGINS` only. Identity base URL, e.g. `http://identity:8080`; asked which customer origins an app lists (cached 60 s) |
 | `SYNTHWERK_VISION_STORAGE_BACKEND`  | `local` (files in the upload dir) or `s3` (S3-compatible bucket) |
 | `SYNTHWERK_VISION_UPLOAD_DIR`       | `uploads` (local backend)                      |
 | `SYNTHWERK_VISION_UPLOAD_QUOTA_BYTES` | `1073741824` (1 GiB): bytes kept per org     |
@@ -330,12 +331,14 @@ OpenTelemetry uses the `OTEL_*` names of the OTel spec, read from the process en
 
 ```text
 src/synthwerk_vision/
-  main.py         app factory, CORS, request id + request log line, readiness checks, lifespan
+  main.py         app factory, widget CORS, request id + request log line, readiness checks, lifespan
   platform/config.py  pydantic-settings (prefix SYNTHWERK_VISION_, plus SYNTHWERK_PLATFORM_ENV)
   platform/log.py     JSON logs: structlog formatter, forbidden keys, request id
   platform/otel.py    OpenTelemetry resource, OTLP exporters, FastAPI instrumentation
   platform/health.py  /healthz and /readyz (health contract)
   api/routes.py   HTTP layer and dependency wiring
+  api/cors.py     CORS of the widget routes: origin policy, identity lookup, middleware
+  api/origin.py   strict Origin parser (same as identity)
   api/admin.py    label sets and corrections, default and per org (admin token)
   images.py       bounded reads, image validation, dHash
   storage.py      ImageStorage protocol, keys per org, local disk + S3 (obstore) backends
@@ -450,7 +453,9 @@ here with its source and license before it is used.
   the extension from the decoded format, never from the client. Local files open with `O_EXCL`,
   so an upload can never overwrite an existing file. S3 objects get no ACL: they stay as private
   as the bucket.
-- CORS allows only the configured origins, without credentials.
+- CORS: only `POST /v1/classifications` and `POST /v1/images` answer it, for the static
+  `SYNTHWERK_VISION_CORS_ORIGINS` or an origin an app lists in identity. Never credentials.
+  Other routes send no CORS headers.
 - Endpoints that change server state (`/v1/labels`, `/v1/feedback`) need a bearer token
   (`SYNTHWERK_VISION_ADMIN_TOKEN`, compared in constant time) and are absent without one.
 - Classification and uploads need a widget token from synthwerk-identity (ES256, origin-bound,

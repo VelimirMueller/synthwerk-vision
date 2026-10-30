@@ -93,3 +93,4 @@ updated: 2026-10-30
 | 2026-10-29 | `main.py` checks the widget token settings before telemetry starts. A bad token setting stops the start. Health and telemetry do not change (#76). |
 | 2026-10-30 | `main.py` moves `labels.yaml` to the default label set at startup and keeps the org label sets. Health and telemetry do not change (synthwerk#44). |
 | 2026-10-30 | New readiness check `storage` for the S3 upload bucket. `main.py` builds the storage from the settings; a bad storage setting stops the start (#77). |
+| 2026-10-30 | `main.py` replaces the global CORS middleware with the widget CORS middleware (infra#24). A preflight gets a request id and a log line. `/readyz` does not ask identity. Health and telemetry do not change. |

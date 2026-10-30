@@ -90,3 +90,4 @@ updated: 2026-10-30
 | 2026-10-29 | The route needs a widget token (#76). The service does not start without the token settings. |
 | 2026-10-30 | The label set and the corrections come from the widget token's org (synthwerk#44). A SigLIP label set built by another worker loads from the label cache. |
 | 2026-10-30 | New storage settings in `platform/config.py` for `POST /v1/images` (#77). Classification does not change. |
+| 2026-10-30 | CORS only on `POST /v1/classifications` and `POST /v1/images`, per app origin from identity (infra#24, see `widget-cors.md`). New setting `IDENTITY_URL`. An invalid item in `CORS_ORIGINS` stops the start. |

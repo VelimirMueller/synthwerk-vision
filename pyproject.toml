@@ -23,6 +23,7 @@ dependencies = [
     "opentelemetry-instrumentation-logging==0.66b1",
     "pyjwt[crypto]>=2.10",
     "obstore>=0.12.1,<0.13",
+    "httpx>=0.28",
 ]
 
 [dependency-groups]
