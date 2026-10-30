@@ -102,3 +102,4 @@ curl -H "Authorization: Bearer $SYNTHWERK_VISION_ADMIN_TOKEN" -H 'content-type: 
 | Date | Change |
 |---|---|
 | 2026-10-30 | First version: default set, org sets, corrections per org, migration of `labels.yaml` (synthwerk#44). |
+| 2026-10-30 | `routes.py` stores uploads under the widget token org (#77). Label sets and corrections do not change. |
