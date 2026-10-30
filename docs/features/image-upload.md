@@ -29,8 +29,11 @@ updated: 2026-10-30
 - The service refuses an org id that is not 1 to 64 characters of `[A-Za-z0-9_-]` (500, nothing stored).
 - The service keeps usage counters in each process: files and bytes per org, and bytes for all orgs.
   - A counter starts from one scan: local walks the folder, S3 lists the prefix `<org>/` or the whole bucket. One request per 1000 objects; the listing stops once a quota is reached. No usage table to keep in step.
-  - The service scans again when a counter is older than 60 s. Uploads and deletes of other workers and instances show up within that time.
-  - Between two scans, each other worker or instance can add uploads that this process does not count yet.
+  - The service scans again when a counter is older than 10 s.
+  - Near a limit, the service scans again before each write: when the counter plus the upload plus a margin passes the limit. The margin is `MAX_UPLOAD_BYTES` × `UPLOAD_WRITERS` bytes and `UPLOAD_WRITERS` files.
+  - Far from a limit, a save costs no scan.
+  - With N writers, a quota can go over by at most N − 1 uploads: each writer can pass the check at the same moment (the same rule as #19).
+- Bytes of writes in flight have their own counter. A scan during a write does not lose or double-count them.
 - When the new upload goes over the org quota or the total cap, the service stores nothing and answers 507.
 - Each org has its own lock. A slow write for one org does not block the uploads of other orgs.
 - A failed write gives its bytes back to the total counter.
@@ -73,7 +76,8 @@ Switch to the S3 backend:
 | Byte quota per org | 1 GiB (`SYNTHWERK_VISION_UPLOAD_QUOTA_BYTES`) |
 | File quota per org | 10 000 (`SYNTHWERK_VISION_UPLOAD_QUOTA_FILES`) |
 | Byte cap for all orgs | 5 GiB (`SYNTHWERK_VISION_UPLOAD_QUOTA_TOTAL_BYTES`). Keep it below the bucket or disk size (Supabase free plan: 1 GB) |
-| Counter refresh | 60 s |
+| Counter refresh | 10 s, and before each write near a limit |
+| Writers for the margin | 2 (`SYNTHWERK_VISION_UPLOAD_WRITERS`): worker processes × instances on the same store |
 | S3 timeouts | Connect 2 s, request 10 s, 2 retries |
 | Read back by id | Not available |
 
@@ -111,7 +115,10 @@ Switch to the S3 backend:
 - `tests/test_storage.py` — `local - file deleted during the scan - skipped`
 - `tests/test_storage.py` — `local - total cap reached by all orgs - next save of any org refused`
 - `tests/test_storage.py` — `local - failed write - reserved bytes given back`
-- `tests/test_storage.py` — `local - counter older than 60 s - scanned again`
+- `tests/test_storage.py` — `local - counter older than 10 s - scanned again`
+- `tests/test_storage.py` — `local - near the limit with a stale cache - scanned again and refused`
+- `tests/test_storage.py` — `local - failed write during a rescan - total stays correct`
+- `tests/test_storage.py` — `s3 - total near the limit with a stale cache - scanned again and refused`
 - `tests/test_storage.py` — `s3 - total cap reached by all orgs - next save refused`
 - `tests/test_storage.py` — `s3 - slow put of one org - other org not blocked`
 - `tests/test_storage.py` — `s3 - quota reached on the first page - listing stops`

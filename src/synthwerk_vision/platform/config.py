@@ -52,6 +52,13 @@ class Settings(BaseSettings):
         gt=0,
         description="Bytes POST /v1/images may keep for all orgs together; more answers 507.",
     )
+    upload_writers: int = Field(
+        default=2,
+        ge=1,
+        description="Worker processes times instances that write uploads to the same store. "
+        "Near a quota, usage is scanned again before each write when it is within "
+        "max_upload_bytes x upload_writers of the limit.",
+    )
     s3_endpoint: str | None = Field(
         default=None,
         description="S3 API URL, e.g. https://<project>.storage.supabase.co/storage/v1/s3.",

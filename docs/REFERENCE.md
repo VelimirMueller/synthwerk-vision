@@ -267,6 +267,7 @@ unavailable. The fix is then to rebuild the set: `scripts/build_eval_manifest.py
 | `SYNTHWERK_VISION_UPLOAD_DIR`       | `uploads` (local backend)                      |
 | `SYNTHWERK_VISION_UPLOAD_QUOTA_BYTES` | `1073741824` (1 GiB): bytes kept per org     |
 | `SYNTHWERK_VISION_UPLOAD_QUOTA_FILES` | `10000`: files kept per org                  |
+| `SYNTHWERK_VISION_UPLOAD_WRITERS` | `2`: worker processes × instances on the same store. Near a quota, usage is scanned again before each write; a quota can go over by at most writers − 1 uploads |
 | `SYNTHWERK_VISION_UPLOAD_QUOTA_TOTAL_BYTES` | `5368709120` (5 GiB): bytes kept for all orgs together. Keep it below the bucket or disk size |
 | `SYNTHWERK_VISION_S3_ENDPOINT`      | unset; **required** with `s3`. Supabase: `https://<project>.storage.supabase.co/storage/v1/s3`. `https` outside `local` and `ci` |
 | `SYNTHWERK_VISION_S3_REGION`        | unset; **required** with `s3`, such as `eu-central-1` |

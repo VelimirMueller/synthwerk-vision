@@ -93,15 +93,21 @@ class _QuotaStorage:
     for the whole store.
 
     - Usage lives in counters per process. A counter starts from one scan (a folder walk or a
-      prefix listing) and is scanned again when it is older than `REFRESH_S`, so uploads and
-      deletes by other workers or instances show up within that time. Between scans, each
-      other worker or instance can add uploads that this process does not see yet.
+      prefix listing) and is scanned again when it is older than `REFRESH_S`.
+    - Near a limit, the counter is scanned again before every write: when the cached usage
+      plus the upload plus a margin (`margin_bytes`, `margin_files`: one upload per other
+      writer) passes the limit. So far from a limit a save costs no listing, and near a limit
+      it sees what other workers and instances wrote.
+    - Residual race: N writers can each pass the check at the same moment, so a quota can be
+      exceeded by at most N - 1 uploads (as in #36).
     - Each org has its own lock, held across the scan and the write of that org only. The
-      total counter is reserved and released under a short lock with no I/O, so a slow write
-      for one org never blocks another org.
+      total cap is reserved under a short lock with no I/O, so a slow write for one org never
+      blocks another org.
+    - Reserved bytes of writes in flight live in their own counter, not in the scanned total.
+      A rescan during a write therefore never drops or double-releases a reservation.
     """
 
-    REFRESH_S = 60.0
+    REFRESH_S = 10.0
 
     def __init__(
         self,
@@ -109,20 +115,24 @@ class _QuotaStorage:
         max_bytes: int,
         max_files: int,
         max_total_bytes: int,
+        margin_bytes: int = 0,
+        margin_files: int = 0,
         clock: Clock = _utc_now,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._max_bytes = max_bytes
         self._max_files = max_files
         self._max_total_bytes = max_total_bytes
+        self._margin_bytes = margin_bytes
+        self._margin_files = margin_files
         self._clock = clock
         self._monotonic = monotonic
         self._org_locks: weakref.WeakValueDictionary[str, _OrgLock] = weakref.WeakValueDictionary()
         self._org_usage: dict[str, _Usage] = {}
-        self._total: _Usage | None = None
+        self._total: _Usage | None = None  # scanned bytes plus completed writes
+        self._in_flight = 0  # bytes reserved by writes that have not ended yet
         self._lock = threading.Lock()  # guards the dicts and counters; never held across I/O
-        # Serialises the total scan (once per REFRESH_S), so two refreshes never race. It is
-        # never held across a write.
+        # Serialises the total scan, so two scans never race. Never held across a write.
         self._total_scan_lock = threading.Lock()
 
     def save(self, data: bytes, *, org_id: str, extension: str, content_type: str) -> str:
@@ -134,27 +144,33 @@ class _QuotaStorage:
             if org_lock is None:
                 org_lock = self._org_locks[org_id] = _OrgLock()
         with org_lock.lock:
-            org = self._org_counter(org_id)
+            org = self._org_counter(org_id, size)
             if org.files + 1 > self._max_files or org.bytes + size > self._max_bytes:
                 raise StorageFullError("upload storage quota reached")
             self._reserve_total(size)
             try:
                 self._put(key, data, content_type)
-            except BaseException:
+            finally:
                 with self._lock:
-                    assert self._total is not None  # noqa: S101 (set by _reserve_total)
-                    self._total.bytes = max(0, self._total.bytes - size)
-                raise
+                    self._in_flight -= size
             with self._lock:
                 org.files += 1
                 org.bytes += size
+                if self._total is not None:
+                    self._total.bytes += size
         return image_id
 
-    def _org_counter(self, org_id: str) -> _Usage:
+    def _org_near_limit(self, usage: _Usage, size: int) -> bool:
+        return (
+            usage.files + 1 + self._margin_files > self._max_files
+            or usage.bytes + size + self._margin_bytes > self._max_bytes
+        )
+
+    def _org_counter(self, org_id: str, size: int) -> _Usage:
         """The org's counter; called with the org lock held, so one scan per org at a time."""
         with self._lock:
             usage = self._org_usage.get(org_id)
-        if usage is None or self._stale(usage):
+        if usage is None or self._stale(usage) or self._org_near_limit(usage, size):
             files, used = self._scan(f"{org_id}/", self._max_files, self._max_bytes)
             usage = _Usage(files, used, self._monotonic())
             with self._lock:
@@ -166,27 +182,32 @@ class _QuotaStorage:
 
     def _reserve_total(self, size: int) -> None:
         with self._lock:
-            needs_scan = self._total is None or self._stale(self._total)
+            seen = self._total
+            needs_scan = (
+                seen is None
+                or self._stale(seen)
+                or seen.bytes + self._in_flight + size + self._margin_bytes > self._max_total_bytes
+            )
         if needs_scan:
             with self._total_scan_lock:
                 with self._lock:
-                    needs_scan = self._total is None or self._stale(self._total)
-                if needs_scan:  # still stale: no other thread refreshed it meanwhile
+                    replaced = self._total is not seen  # another thread scanned meanwhile
+                if not replaced:
                     _, used = self._scan(None, None, self._max_total_bytes)
                     with self._lock:
                         self._total = _Usage(0, used, self._monotonic())
         with self._lock:
             total = self._total
             assert total is not None  # noqa: S101 (set above)
-            if total.bytes + size > self._max_total_bytes:
+            if total.bytes + self._in_flight + size > self._max_total_bytes:
                 raise StorageFullError("upload storage quota reached")
-            total.bytes += size
+            self._in_flight += size
 
     def _stale(self, usage: _Usage) -> bool:
         return self._monotonic() - usage.measured_at > self.REFRESH_S
 
     def _idle(self, usage: _Usage) -> bool:
-        return self._monotonic() - usage.measured_at > 10 * self.REFRESH_S
+        return self._monotonic() - usage.measured_at > 60 * self.REFRESH_S
 
     def _scan(
         self, prefix: str | None, stop_files: int | None, stop_bytes: int
@@ -211,6 +232,8 @@ class LocalImageStorage(_QuotaStorage):
         max_bytes: int,
         max_files: int,
         max_total_bytes: int,
+        margin_bytes: int = 0,
+        margin_files: int = 0,
         clock: Clock = _utc_now,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -218,6 +241,8 @@ class LocalImageStorage(_QuotaStorage):
             max_bytes=max_bytes,
             max_files=max_files,
             max_total_bytes=max_total_bytes,
+            margin_bytes=margin_bytes,
+            margin_files=margin_files,
             clock=clock,
             monotonic=monotonic,
         )
@@ -259,8 +284,8 @@ class S3ImageStorage(_QuotaStorage):
     """Objects in an S3-compatible bucket (Supabase Storage in dev, stg and prd, #77).
 
     - Counters start from a listing (the org prefix, or the whole bucket for the total) and
-      are listed again after `REFRESH_S`, not on every save. No usage table to keep in step.
-      A listing page holds 1000 keys and stops once the quota is reached.
+      are listed again after `REFRESH_S` or near a limit, not on every save. No usage table
+      to keep in step. A listing page holds 1000 keys and stops once the quota is reached.
     - Objects get the content type of the decoded image and no ACL: they stay as private as
       the bucket.
     """
@@ -274,6 +299,8 @@ class S3ImageStorage(_QuotaStorage):
         max_bytes: int,
         max_files: int,
         max_total_bytes: int,
+        margin_bytes: int = 0,
+        margin_files: int = 0,
         clock: Clock = _utc_now,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -281,6 +308,8 @@ class S3ImageStorage(_QuotaStorage):
             max_bytes=max_bytes,
             max_files=max_files,
             max_total_bytes=max_total_bytes,
+            margin_bytes=margin_bytes,
+            margin_files=margin_files,
             clock=clock,
             monotonic=monotonic,
         )
@@ -378,16 +407,23 @@ def build_s3_store(settings: Settings) -> S3Store:
 
 def build_storage(settings: Settings) -> LocalImageStorage | S3ImageStorage:
     """The configured backend. Raises StorageConfigError for missing or bad s3 settings."""
+    # Near a limit, scan again before the write: one upload of margin per other writer.
+    margin_bytes = settings.max_upload_bytes * settings.upload_writers
+    margin_files = settings.upload_writers
     if settings.storage_backend == "s3":
         return S3ImageStorage(
             build_s3_store(settings),
             max_bytes=settings.upload_quota_bytes,
             max_files=settings.upload_quota_files,
             max_total_bytes=settings.upload_quota_total_bytes,
+            margin_bytes=margin_bytes,
+            margin_files=margin_files,
         )
     return LocalImageStorage(
         settings.upload_dir,
         max_bytes=settings.upload_quota_bytes,
         max_files=settings.upload_quota_files,
         max_total_bytes=settings.upload_quota_total_bytes,
+        margin_bytes=margin_bytes,
+        margin_files=margin_files,
     )

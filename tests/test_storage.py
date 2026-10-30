@@ -80,6 +80,7 @@ def local(
     max_bytes: int = 1024,
     max_files: int = 10,
     max_total_bytes: int = 4096,
+    margin_bytes: int = 0,
     monotonic: FakeMonotonic | None = None,
 ) -> LocalImageStorage:
     return LocalImageStorage(
@@ -87,6 +88,7 @@ def local(
         max_bytes=max_bytes,
         max_files=max_files,
         max_total_bytes=max_total_bytes,
+        margin_bytes=margin_bytes,
         clock=clock,
         monotonic=monotonic or FakeMonotonic(),
     )
@@ -173,9 +175,61 @@ def test_local_counters_scanned_again_after_refresh_interval(tmp_path: Path) -> 
     monotonic.now += LocalImageStorage.REFRESH_S + 1
     with pytest.raises(StorageFullError):
         storage.save(b"a", org_id="org-1", **PNG)  # rescanned: 10 of 10 bytes
-    monotonic.now += 10 * LocalImageStorage.REFRESH_S + 1
+    monotonic.now += 60 * LocalImageStorage.REFRESH_S + 1
     storage.save(b"a", org_id="org-2", **PNG)  # the idle counter of org-1 is dropped
     assert "org-1" not in storage._org_usage
+
+
+def test_local_near_limit_stale_cache_scanned_again_and_refused(tmp_path: Path) -> None:
+    storage = local(tmp_path, max_bytes=10, margin_bytes=4)
+    storage.save(b"aa", org_id="org-1", **PNG)
+    other = tmp_path / "org-1" / "2026" / "09"
+    other.mkdir(parents=True)
+    (other / "from-another-instance.png").write_bytes(b"x" * 6)
+    assert storage.save(b"aa", org_id="org-1", **PNG)  # far from the limit: cache, no scan
+
+    with pytest.raises(StorageFullError):
+        storage.save(b"aaa", org_id="org-1", **PNG)  # cache says 4 + 3; the scan says 10 + 3
+
+
+def test_local_failed_write_during_rescan_leaves_total_correct(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monotonic = FakeMonotonic()
+    storage = local(tmp_path, max_total_bytes=100, monotonic=monotonic)
+    entered, release = threading.Event(), threading.Event()
+    real_put = LocalImageStorage._put
+
+    def put(self: LocalImageStorage, key: str, data: bytes, content_type: str) -> None:
+        if key.startswith("org-a/"):
+            entered.set()
+            assert release.wait(5)
+            raise OSError("disk full")
+        real_put(self, key, data, content_type)
+
+    monkeypatch.setattr(LocalImageStorage, "_put", put)
+    errors: list[BaseException] = []
+
+    def save_a() -> None:
+        try:
+            storage.save(b"aaaaa", org_id="org-a", **PNG)
+        except OSError as exc:
+            errors.append(exc)
+
+    slow = threading.Thread(target=save_a)
+    slow.start()
+    try:
+        assert entered.wait(5)
+        monotonic.now += LocalImageStorage.REFRESH_S + 1  # the next save scans the total again
+        storage.save(b"bbb", org_id="org-b", **PNG)
+    finally:
+        release.set()
+        slow.join(5)
+
+    assert len(errors) == 1
+    assert storage._total is not None
+    on_disk = sum(p.stat().st_size for p in files_in(tmp_path))
+    assert (storage._total.bytes, storage._in_flight, on_disk) == (3, 0, 3)
 
 
 def test_local_quota_file_deleted_during_scan_skipped(
@@ -266,6 +320,7 @@ def s3_storage(
     max_bytes: int = 1024,
     max_files: int = 10,
     max_total_bytes: int = 4096,
+    margin_bytes: int = 0,
     monotonic: FakeMonotonic | None = None,
 ) -> S3ImageStorage:
     return S3ImageStorage(
@@ -273,6 +328,7 @@ def s3_storage(
         max_bytes=max_bytes,
         max_files=max_files,
         max_total_bytes=max_total_bytes,
+        margin_bytes=margin_bytes,
         clock=clock,
         monotonic=monotonic or FakeMonotonic(),
     )
@@ -359,6 +415,18 @@ def test_s3_total_cap_reached_save_of_any_org_refused(
 
     with pytest.raises(StorageFullError, match="quota"):
         storage.save(b"bb", org_id="org-2", **PNG)
+    assert len(keys(s3, bucket)) == 2
+
+
+def test_s3_total_near_limit_stale_cache_scanned_again_and_refused(
+    s3_settings: Settings, s3: Any, bucket: str
+) -> None:
+    storage = s3_storage(s3_settings, max_bytes=100, max_total_bytes=20, margin_bytes=16)
+    storage.save(b"aa", org_id="org-1", **PNG)
+    s3.put_object(Bucket=bucket, Key="org-9/2026/10/other-instance.png", Body=b"x" * 15)
+
+    with pytest.raises(StorageFullError):
+        storage.save(b"aaaa", org_id="org-2", **PNG)  # cache says 2 + 4; the listing 17 + 4
     assert len(keys(s3, bucket)) == 2
 
 
