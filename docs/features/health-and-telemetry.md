@@ -24,6 +24,7 @@ updated: 2026-10-30
 - `GET /readyz` runs the readiness checks and returns `{status, version, commit, checks}`.
   - `model`: `down` until the model is loaded.
   - `data_dir`: only when the admin token is set. `degraded` when the data directory is not writable.
+  - `storage`: only with `SYNTHWERK_VISION_STORAGE_BACKEND=s3`. `degraded` when the upload bucket does not answer, is missing or refuses the credentials.
   - The overall `status` is the worst check. `ok` and `degraded` return 200, `down` returns 503.
 - The body follows the health contract `openapi/_shared/health.yaml` in synthwerk-contracts.
 - Every log record is one JSON object on stdout. uvicorn and library loggers use the same handler.
@@ -45,7 +46,7 @@ updated: 2026-10-30
 
 | Rule | Value |
 |---|---|
-| Readiness check timeout | 0.25 s per check, checks run at the same time |
+| Readiness check timeout | 0.25 s per check (`storage`: 0.4 s for the bucket, then `degraded`; 0.45 s for the check), checks run at the same time |
 | `detail` | Constant text. No secrets, paths or user data. |
 | Log level | `SYNTHWERK_VISION_LOG_LEVEL`, default `INFO` |
 | Log format | `SYNTHWERK_VISION_LOG_FORMAT`, `json` (default) or `console` (only when `SYNTHWERK_PLATFORM_ENV=local`) |
@@ -78,6 +79,9 @@ updated: 2026-10-30
 - `tests/test_platform.py` — `request - traced - one trace_id in span, stdout and OTel log`
 - `tests/test_platform.py` — `otel setup - endpoint not set - no exporter, one warning`
 - `tests/test_platform.py` — `settings - platform env without service prefix - read`
+- `tests/test_storage.py` — `readyz - s3 backend - storage ok, degraded when the bucket is missing`
+- `tests/test_storage.py` — `readyz - slow bucket - degraded, not down`
+- `tests/test_storage.py` — `readyz - local backend - no storage check`
 
 ## Changes
 
@@ -88,3 +92,4 @@ updated: 2026-10-30
 | 2026-10-29 | `main.py` gives the upload storage its quota. Health and telemetry do not change (#19). |
 | 2026-10-29 | `main.py` checks the widget token settings before telemetry starts. A bad token setting stops the start. Health and telemetry do not change (#76). |
 | 2026-10-30 | `main.py` moves `labels.yaml` to the default label set at startup and keeps the org label sets. Health and telemetry do not change (synthwerk#44). |
+| 2026-10-30 | New readiness check `storage` for the S3 upload bucket. `main.py` builds the storage from the settings; a bad storage setting stops the start (#77). |

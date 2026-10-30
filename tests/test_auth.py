@@ -44,6 +44,7 @@ def bare(settings: Settings) -> Iterator[TestClient]:
             settings.upload_dir,
             max_bytes=settings.upload_quota_bytes,
             max_files=settings.upload_quota_files,
+            max_total_bytes=settings.upload_quota_total_bytes,
         ),
         classifier=FakeClassifier(),
     )
@@ -298,6 +299,7 @@ def test_auth_disabled_locally_no_token_needed(settings: Settings) -> None:
             local.upload_dir,
             max_bytes=local.upload_quota_bytes,
             max_files=local.upload_quota_files,
+            max_total_bytes=local.upload_quota_total_bytes,
         ),
         classifier=FakeClassifier(),
     )

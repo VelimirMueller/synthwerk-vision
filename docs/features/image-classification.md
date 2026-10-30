@@ -89,3 +89,4 @@ updated: 2026-10-30
 | 2026-10-29 | New settings `UPLOAD_QUOTA_BYTES` and `UPLOAD_QUOTA_FILES` for `POST /v1/images`. Classification does not change (#19). |
 | 2026-10-29 | The route needs a widget token (#76). The service does not start without the token settings. |
 | 2026-10-30 | The label set and the corrections come from the widget token's org (synthwerk#44). A SigLIP label set built by another worker loads from the label cache. |
+| 2026-10-30 | New storage settings in `platform/config.py` for `POST /v1/images` (#77). Classification does not change. |

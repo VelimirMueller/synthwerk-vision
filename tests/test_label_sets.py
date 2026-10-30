@@ -60,7 +60,9 @@ def hut_client(settings: Settings) -> Iterator[TestClient]:
     taxonomy = label_sets(settings).default.load(lambda: Taxonomy.load(settings.taxonomy_path))
     app = create_app(
         settings,
-        storage=LocalImageStorage(settings.upload_dir, max_bytes=1 << 20, max_files=100),
+        storage=LocalImageStorage(
+            settings.upload_dir, max_bytes=1 << 20, max_files=100, max_total_bytes=1 << 30
+        ),
         classifier=OpenFakeClassifier(taxonomy, favourite="hut"),
     )
     app.dependency_overrides[get_settings] = lambda: settings

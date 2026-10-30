@@ -1,3 +1,4 @@
+import functools
 import hashlib
 import logging
 import time
@@ -32,7 +33,7 @@ from synthwerk_vision.schemas import (
     TopicOut,
 )
 from synthwerk_vision.service import Classification, ClassificationService, ScoredLabel, ScoredTopic
-from synthwerk_vision.storage import ImageStorage, StorageFullError
+from synthwerk_vision.storage import ImageStorage, StorageFullError, StorageUnavailableError
 
 logger = logging.getLogger("synthwerk_vision")
 router = APIRouter()
@@ -77,6 +78,9 @@ class OrgServices:
     def __len__(self) -> int:
         return len(self._items)
 
+
+# Org of uploads when auth is disabled (local and ci only): no token, so no org claim.
+LOCAL_ORG = "local"
 
 _IMAGE_ERRORS: dict[int | str, dict[str, object]] = {
     413: {"model": ErrorOut, "description": "Upload exceeds the size limit"},
@@ -171,25 +175,37 @@ async def validated_image(
     responses={
         **TOKEN_ERRORS,
         **_IMAGE_ERRORS,
-        507: {"model": ErrorOut, "description": "Upload storage quota reached"},
+        503: {"model": ErrorOut, "description": "Token keys or upload storage unavailable"},
+        507: {"model": ErrorOut, "description": "Upload storage quota of the org reached"},
     },
-    dependencies=[Depends(require_widget_token)],
 )
 async def upload_image(
+    principal: WidgetToken,
     image: Annotated[ValidatedImage, Depends(validated_image)],
     storage: Annotated[ImageStorage, Depends(get_storage)],
 ) -> ImageOut:
-    """Store an image under a server-generated id.
+    """Store an image for the caller's org under a server-generated id.
 
-    The upload folder has a byte and a file quota. When it is full, the answer is 507.
+    Each org has a byte and a file quota. When it is full, the answer is 507.
     """
+    content_type = f"image/{image.format.lower()}"
     try:
-        image_id = await run_in_threadpool(storage.save, image.data, image.extension)
+        image_id = await run_in_threadpool(
+            functools.partial(
+                storage.save,
+                image.data,
+                org_id=principal.org_id if principal else LOCAL_ORG,
+                extension=image.extension,
+                content_type=content_type,
+            )
+        )
     except StorageFullError as exc:
         raise HTTPException(status.HTTP_507_INSUFFICIENT_STORAGE, str(exc)) from exc
+    except StorageUnavailableError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
     return ImageOut(
         id=image_id,
-        content_type=f"image/{image.format.lower()}",
+        content_type=content_type,
         size_bytes=len(image.data),
         width=image.width,
         height=image.height,

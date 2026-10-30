@@ -156,6 +156,7 @@ def _client(settings: Settings, **kwargs: object) -> Iterator[TestClient]:
         settings.upload_dir,
         max_bytes=settings.upload_quota_bytes,
         max_files=settings.upload_quota_files,
+        max_total_bytes=settings.upload_quota_total_bytes,
     )
     app = create_app(settings, storage=storage, **kwargs)  # type: ignore[arg-type]
     app.dependency_overrides[get_settings] = lambda: settings
@@ -240,6 +241,7 @@ def open_client(settings: Settings) -> Iterator[TestClient]:
             settings.upload_dir,
             max_bytes=settings.upload_quota_bytes,
             max_files=settings.upload_quota_files,
+            max_total_bytes=settings.upload_quota_total_bytes,
         ),
         classifier=OpenFakeClassifier(taxonomy),
     )
