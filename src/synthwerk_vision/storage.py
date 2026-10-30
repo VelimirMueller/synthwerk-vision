@@ -105,7 +105,10 @@ class LocalImageStorage:
             return files, used
         for dirpath, _, names in os.walk(folder):
             for name in names:
-                stat = os.lstat(os.path.join(dirpath, name))
+                try:
+                    stat = os.lstat(os.path.join(dirpath, name))
+                except FileNotFoundError:  # deleted by another process during the walk
+                    continue
                 files += 1
                 used += stat.st_size
         return files, used
@@ -172,10 +175,13 @@ class S3ImageStorage:
         return image_id
 
     def _usage(self, prefix: str) -> tuple[int, int]:
+        """Objects and bytes under the prefix. Stops early once a quota is already reached."""
         files = used = 0
         for chunk in obstore.list(self._store, prefix=prefix, chunk_size=self.LIST_PAGE):
             files += len(chunk)
             used += sum(meta["size"] for meta in chunk)
+            if files >= self._max_files or used >= self._max_bytes:
+                break
         return files, used
 
     async def reachable(self) -> bool:

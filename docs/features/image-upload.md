@@ -29,7 +29,7 @@ updated: 2026-10-30
 - The service refuses an org id that is not 1 to 64 characters of `[A-Za-z0-9_-]` (500, nothing stored).
 - Before each write, the service adds up the files and bytes of the org.
   - Local: it walks the folder `<upload dir>/<org>`.
-  - S3: it lists the prefix `<org>/`. One request per 1000 objects. No usage table to keep in step.
+  - S3: it lists the prefix `<org>/`. One request per 1000 objects, and it stops once a quota is reached. No usage table to keep in step.
 - When the new upload goes over a quota of the org, the service stores nothing and answers 507.
 - Uploads from other workers and other instances count too. Each other worker or instance can add one upload over the quota.
 - Local backend:
@@ -104,6 +104,7 @@ Switch to the S3 backend:
 - `tests/test_storage.py` — `local - byte or file quota of an org reached - next save refused, other org stored`
 - `tests/test_storage.py` — `local - files of other workers - counted in the quota`
 - `tests/test_storage.py` — `local - write error - partial file removed`
+- `tests/test_storage.py` — `local - file deleted during the scan - skipped`
 - `tests/test_storage.py` — `s3 - save - private object with the content type`
 - `tests/test_storage.py` — `s3 - byte or file quota of an org reached - next save refused, other org stored`
 - `tests/test_storage.py` — `s3 - objects of other instances over several pages - counted`

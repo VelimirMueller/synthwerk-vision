@@ -46,7 +46,7 @@ updated: 2026-10-30
 
 | Rule | Value |
 |---|---|
-| Readiness check timeout | 0.25 s per check (`storage`: 0.45 s), checks run at the same time |
+| Readiness check timeout | 0.25 s per check (`storage`: 0.4 s for the bucket, then `degraded`; 0.45 s for the check), checks run at the same time |
 | `detail` | Constant text. No secrets, paths or user data. |
 | Log level | `SYNTHWERK_VISION_LOG_LEVEL`, default `INFO` |
 | Log format | `SYNTHWERK_VISION_LOG_FORMAT`, `json` (default) or `console` (only when `SYNTHWERK_PLATFORM_ENV=local`) |

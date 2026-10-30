@@ -2,6 +2,7 @@
 no real Supabase call."""
 
 import asyncio
+import os
 import socket
 import uuid
 from collections.abc import Iterator
@@ -103,6 +104,24 @@ def test_local_quota_counts_files_of_other_workers(tmp_path: Path) -> None:
     with pytest.raises(StorageFullError):
         storage.save(b"abc", org_id="org-1", **PNG)
     assert storage.save(b"ab", org_id="org-1", **PNG)
+
+
+def test_local_quota_file_deleted_during_scan_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = local(tmp_path, max_files=2)
+    storage.save(b"a", org_id="org-1", **PNG)
+    real_lstat = os.lstat
+
+    def gone(path: str) -> os.stat_result:
+        if path.endswith(".png"):
+            raise FileNotFoundError(path)
+        return real_lstat(path)
+
+    monkeypatch.setattr("synthwerk_vision.storage.os.lstat", gone)
+
+    assert storage.save(b"b", org_id="org-1", **PNG)  # the vanished file is not counted
+    assert storage.save(b"c", org_id="org-1", **PNG)
 
 
 def test_local_write_error_partial_file_removed(

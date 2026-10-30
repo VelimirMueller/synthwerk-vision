@@ -38,7 +38,7 @@ flowchart LR
   - `data_dir`: only when `SYNTHWERK_VISION_ADMIN_TOKEN` is set. `degraded` when the data
     directory is not writable (classification still works, runtime labels and corrections fail).
   - `storage`: only with `SYNTHWERK_VISION_STORAGE_BACKEND=s3`. `degraded` when the upload bucket
-    does not answer within 0.4 s, is missing or refuses the credentials (uploads fail with 503).
+    does not answer within 0.4 s (check timeout 0.45 s), is missing or refuses the credentials (uploads fail with 503).
 - Both POST endpoints take `multipart/form-data` with one field, `image` (JPEG, PNG or WebP).
 - Both POST endpoints need `Authorization: Bearer <widget token>` from synthwerk-identity and the
   matching `Origin` header (#76). No valid token: 401. Other origin: 403. See

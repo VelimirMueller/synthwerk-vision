@@ -1,3 +1,4 @@
+import functools
 import hashlib
 import logging
 import time
@@ -190,7 +191,8 @@ async def upload_image(
     content_type = f"image/{image.format.lower()}"
     try:
         image_id = await run_in_threadpool(
-            lambda: storage.save(
+            functools.partial(
+                storage.save,
                 image.data,
                 org_id=principal.org_id if principal else LOCAL_ORG,
                 extension=image.extension,
