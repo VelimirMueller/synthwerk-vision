@@ -1,105 +1,12 @@
-import io
 import time
-from collections.abc import Iterator
-from pathlib import Path
 
-import numpy as np
-import numpy.typing as npt
 import pytest
 from fastapi.testclient import TestClient
-from PIL import Image, ImageDraw
-from pydantic import SecretStr
 
 from synthwerk_vision.main import create_app, runtime_labels
 from synthwerk_vision.platform.config import Settings, get_settings
-from synthwerk_vision.storage import LocalImageStorage
 from synthwerk_vision.taxonomy import Taxonomy
-from tests.conftest import widget_headers
-
-TOKEN = "s3cret-admin-token"
-AUTH = {"Authorization": f"Bearer {TOKEN}"}
-
-
-class OpenFakeClassifier:
-    """Open vocabulary stand-in: any label set, puts most mass on `favourite` if present."""
-
-    model_name = "open-fake"
-
-    def __init__(self, taxonomy: Taxonomy, favourite: str = "beagle") -> None:
-        self.taxonomy = taxonomy
-        self.favourite = favourite
-        self.num_classes = len(taxonomy.labels)
-        self.relabels = 0
-
-    def predict(self, data: bytes) -> npt.NDArray[np.float32]:
-        p = np.full(self.num_classes, 0.1 / max(self.num_classes - 1, 1), dtype=np.float32)
-        for label in self.taxonomy.labels:
-            if label.name == self.favourite:
-                p[:] = 0.1 / max(self.num_classes - 1, 1)
-                p[label.index] = 0.9
-        return p / p.sum()
-
-    def for_taxonomy(self, taxonomy: Taxonomy) -> "OpenFakeClassifier":
-        new = OpenFakeClassifier(taxonomy, self.favourite)
-        new.relabels = self.relabels + 1
-        return new
-
-
-def picture(seed: int, size: tuple[int, int] = (320, 240)) -> bytes:
-    rng = np.random.default_rng(seed)
-    image = Image.new("RGB", size, "white")
-    draw = ImageDraw.Draw(image)
-    for _ in range(12):
-        x, y = int(rng.integers(0, size[0])), int(rng.integers(0, size[1]))
-        r, g, b = (int(c) for c in rng.integers(0, 255, 3))
-        draw.rectangle((x, y, x + 60, y + 40), fill=(r, g, b))
-    out = io.BytesIO()
-    image.save(out, "JPEG", quality=92)
-    return out.getvalue()
-
-
-def resized(data: bytes, width: int) -> bytes:
-    original = Image.open(io.BytesIO(data))
-    image = original.resize((width, round(original.height * width / original.width)))
-    out = io.BytesIO()
-    image.save(out, "JPEG", quality=70)
-    return out.getvalue()
-
-
-@pytest.fixture
-def admin_settings(settings: Settings, tmp_path: Path) -> Settings:
-    return settings.model_copy(
-        update={"admin_token": SecretStr(TOKEN), "data_dir": tmp_path / "data"}
-    )
-
-
-def open_client(settings: Settings) -> Iterator[TestClient]:
-    # Like build_service: the classifier is built for the taxonomy the app will load (overlay).
-    taxonomy = runtime_labels(settings).load(lambda: Taxonomy.load(settings.taxonomy_path))
-    app = create_app(
-        settings,
-        storage=LocalImageStorage(
-            settings.upload_dir,
-            max_bytes=settings.upload_quota_bytes,
-            max_files=settings.upload_quota_files,
-        ),
-        classifier=OpenFakeClassifier(taxonomy),
-    )
-    app.dependency_overrides[get_settings] = lambda: settings
-    with TestClient(app, headers=widget_headers()) as client:
-        yield client
-
-
-@pytest.fixture
-def admin_client(admin_settings: Settings) -> Iterator[TestClient]:
-    yield from open_client(admin_settings)
-
-
-def classify(client: TestClient, data: bytes) -> dict[str, object]:
-    response = client.post("/v1/classifications", files={"image": ("a.jpg", data, "image/jpeg")})
-    assert response.status_code == 200, response.text
-    body: dict[str, object] = response.json()
-    return body
+from tests.conftest import AUTH, TOKEN, classify, open_client, picture, resized
 
 
 def test_admin_endpoints_do_not_exist_without_a_token(client: TestClient) -> None:
@@ -146,7 +53,7 @@ def test_runtime_label_is_scored_immediately_and_survives_restart(
     assert [label["id"] for label in listed["labels"]] == ["runtime:aurora-corona"]
     assert listed["total_labels"] == 6
 
-    overlay = (admin_settings.data_dir / "labels.yaml").read_text()
+    overlay = (admin_settings.data_dir / "label-sets" / "default.yaml").read_text()
     assert "extends:" in overlay and "aurora corona" in overlay
     restarted = next(open_client(admin_settings))
     assert restarted.get("/v1/labels", headers=AUTH).json()["total_labels"] == 6
@@ -179,7 +86,8 @@ def test_bad_label_requests_change_nothing(
     assert duplicate.status_code == 409 and "already exists" in duplicate.json()["detail"]
     assert no_slug.status_code == 409
     assert before.taxonomy.labels == admin_client.app.state.service.taxonomy.labels[:5]  # type: ignore[attr-defined]
-    assert not list((admin_settings.data_dir).glob(".labels-*")), "staged files are cleaned up"
+    staged = list((admin_settings.data_dir / "label-sets").glob(".labels-*"))
+    assert not staged, "staged files are cleaned up"
 
 
 def test_delete_only_runtime_labels(admin_client: TestClient) -> None:

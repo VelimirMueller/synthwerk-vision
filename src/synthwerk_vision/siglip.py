@@ -217,6 +217,22 @@ class SiglipClassifier:
         """A classifier for a changed label set: known texts keep their embedding, only new
         texts go through the text tower. The image session is shared, self is unchanged."""
         texts = label_texts(taxonomy)
+        # Another worker (or an earlier run) may have built this exact label set already: an org
+        # set seen for the first time in this process then needs no text tower.
+        cached = (
+            self._cache.load(texts, width=self._labels.shape[-1])
+            if self._cache is not None
+            else None
+        )
+        if cached is not None:
+            return SiglipClassifier(
+                self._vision,
+                cached,
+                self._scale,
+                texts=texts,
+                embed_texts=self._embed_texts,
+                cache=self._cache,
+            )
         # Without the texts behind the current rows nothing can be reused.
         known = (
             dict(zip(self._texts, self._labels, strict=True))

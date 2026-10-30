@@ -89,6 +89,22 @@ class RuntimeLabelsOut(BaseModel):
     total_labels: int = Field(description="All labels the model scores, packaged + runtime")
 
 
+class LabelSetTopicOut(BaseModel):
+    id: str
+    parent: str | None
+    depth: int = Field(description="0 for a root topic")
+
+
+class LabelSetOut(BaseModel):
+    org_id: str
+    custom: bool = Field(
+        description="True when the org has its own set. False: the org uses the default set."
+    )
+    labels: list[RuntimeLabelOut] = Field(description="Labels added on top of the packaged ones")
+    topics: list[LabelSetTopicOut] = Field(description="Every topic of the set, for new labels")
+    total_labels: int = Field(description="All labels the model scores for the org")
+
+
 class FeedbackOut(BaseModel):
     id: int
     label_id: str

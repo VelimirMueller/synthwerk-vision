@@ -8,7 +8,7 @@ paths: ["src/synthwerk_vision/feedback.py"]
 api: ["POST /v1/feedback"]
 events: []
 mcp: []
-updated: 2026-10-29
+updated: 2026-10-30
 ---
 
 # Picture corrections
@@ -17,6 +17,7 @@ updated: 2026-10-29
 > - An admin tells the service the correct label for one picture.
 > - When the same picture comes back, the response has a `correction` field.
 > - Other pictures are not affected.
+> - A correction belongs to one org. `POST /v1/feedback` stores a default correction (synthwerk#44).
 
 ## What it does
 
@@ -24,7 +25,10 @@ updated: 2026-10-29
 - The key is the 64-bit difference hash (dHash) of the picture.
 - A resized or re-encoded copy of the picture matches the same correction.
 - The response keeps the model output and adds `correction` next to it.
-- The service ignores a correction when its label was deleted.
+- Each row has an org id. `""` is a default correction: from `POST /v1/feedback`, or older than synthwerk#44.
+- An org gets its own correction first, else a default correction. It never gets the correction of another org.
+- Org corrections: `POST /v1/orgs/{org_id}/feedback`, see [label-sets.md](label-sets.md).
+- The service ignores a correction when its label is not in the org's label set.
 - Each worker process reloads the corrections when `feedback.sqlite3` changes on disk.
 - After its own write, a worker reloads once more. It then also sees a row from another worker.
 
@@ -71,3 +75,4 @@ updated: 2026-10-29
 |---|---|
 | 2026-10-09 | Rename to `synthwerk_vision`. The settings use the prefix `SYNTHWERK_VISION_`. |
 | 2026-10-29 | `add()` forces one reload, so a row from another worker is not hidden (#26). |
+| 2026-10-30 | Corrections have an org id. Old rows become default corrections (synthwerk#44). |
