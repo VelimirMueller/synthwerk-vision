@@ -1,9 +1,9 @@
-# Weekly, grouped, one PR per ecosystem (CI-COST-04). target-branch: develop comes when the
-# branch exists (fleet-standard#7); until then the updates go to main.
+# Weekly, grouped, one PR per ecosystem, into develop (CI-COST-04).
 version: 2
 updates:
   - package-ecosystem: uv
     directory: /
+    target-branch: develop
     schedule:
       interval: weekly
       day: monday
@@ -15,6 +15,7 @@ updates:
         patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
+    target-branch: develop
     schedule:
       interval: weekly
       day: monday
@@ -26,6 +27,7 @@ updates:
         patterns: ["*"]
   - package-ecosystem: docker
     directory: /
+    target-branch: develop
     schedule:
       interval: weekly
       day: monday
