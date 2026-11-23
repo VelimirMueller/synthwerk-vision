@@ -2,7 +2,7 @@
 # BACKEND=siglip (default, ~1.5 GB of weights) or BACKEND=mobilenet (14 MB).
 ARG BACKEND=siglip
 
-FROM python:3.14-slim AS build
+FROM python:3.15-slim AS build
 ARG BACKEND
 COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev \
  && mkdir -p models && .venv/bin/python scripts/fetch_model.py "$BACKEND" \
  && SYNTHWERK_VISION_BACKEND="$BACKEND" .venv/bin/python scripts/warm_label_cache.py
 
-FROM python:3.14-slim
+FROM python:3.15-slim
 ARG BACKEND
 RUN useradd --system --uid 10001 --home /app app
 WORKDIR /app
